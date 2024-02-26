@@ -6,7 +6,7 @@
     "scripts": {
         "start": "npm i && npm run build && npm run dev",
         "dev": "http-server",
-        "build": "cross-env NODE_ENV=production ts-node webpack.ts"
+        "build": "cross-env NODE_ENV=production ts-node webpack.ts --watch"
     },
     "repository": {
         "type": "git",
@@ -38,6 +38,7 @@
         "webpack": "^5.75.x"
     },
     "dependencies": {
-        "gl-matrix": "^3.4.3"
+        "gl-matrix": "^3.4.3",
+        "wgpu-matrix": "^2.5.1"
     }
 }
