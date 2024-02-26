@@ -4,6 +4,31 @@ import { Quad } from './quad';
 import vertShaderCode from './shaders/triangle.vert.wgsl';
 import fragShaderCode from './shaders/triangle.frag.wgsl';
 import RenderStats from './renderStats';
+import { RenderPassDescriptor } from './render-pass-descriptor';
+
+function lerp( a: number, b: number, alpha: number ) {
+  return a + alpha * ( b - a );
+ }
+
+function HSVtoRGB(h: number, s: number, v: number) {
+  let r: number, g: number, b: number, i: number, f: number, p: number, q: number, t: number;
+
+  i = Math.floor(h * 6);
+  f = h * 6 - i;
+  p = v * (1 - s);
+  q = v * (1 - f * s);
+  t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+      case 0: r = v, g = t, b = p; break;
+      case 1: r = q, g = v, b = p; break;
+      case 2: r = p, g = v, b = t; break;
+      case 3: r = p, g = q, b = v; break;
+      case 4: r = t, g = p, b = v; break;
+      case 5: r = v, g = p, b = q; break;
+  }
+
+  return { r, g, b };
+}
 
 // Simulation Parameters Buffer Data
 // f32 deltaTime, f32 totalTime, f32 constrainRadius, f32 boxDim, vec4<f32> constrainCenter, vec4<f32> clickPoint
@@ -22,6 +47,7 @@ export default class Renderer {
 
   // 🎞️ Frame Backings
   context: GPUCanvasContext;
+  renderPassDesc: RenderPassDescriptor;  
   colorTexture: GPUTexture;
   colorTextureView: GPUTextureView;
   depthTexture: GPUTexture;
@@ -42,6 +68,15 @@ export default class Renderer {
   lastFrameMS: number;
 
   overlayElement: HTMLElement;
+
+  // Verlet Objects
+  verletObjectRadius: number;
+  numVerletObjects: number;
+  verletObjectNumFloats: number;
+  verletObjectsData: Float32Array;
+  verletObjectsSize: number;
+  voBufferSize: number;
+  voBuffers: GPUBuffer[];
 
   // State
   running = true;
@@ -196,13 +231,51 @@ export default class Renderer {
       }]
     });
 
+    this.verletObjectRadius = 10;
+    this.numVerletObjects = 100;
+    // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,
+    // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR
+    this.verletObjectNumFloats = 16;
+    this.verletObjectsData = new Float32Array(this.verletObjectNumFloats * this.numVerletObjects);
+    this.verletObjectsSize = Float32Array.BYTES_PER_ELEMENT * this.verletObjectNumFloats * this.numVerletObjects;
+  
+    for (let i = 0; i < this.numVerletObjects * this.verletObjectNumFloats; ) {
+      const xpos = (Math.random() * this.canvas.width)  - (this.canvas.width / 2);
+      const ypos = (Math.random() * this.canvas.height) - (this.canvas.height / 2);
+      this.verletObjectsData[i] = xpos;
+      this.verletObjectsData[i+1] = ypos;
+      this.verletObjectsData[i+4] = xpos;
+      this.verletObjectsData[i+5] = ypos;
+  
+      const rgb = HSVtoRGB(0, lerp(0.6, 0.9, Math.random()), 1);
+  
+      this.verletObjectsData[i+12] = rgb.r;
+      this.verletObjectsData[i+13] = rgb.g;
+      this.verletObjectsData[i+14] = rgb.b;
+  
+      this.verletObjectsData[i+15] = this.verletObjectRadius;
+      i += this.verletObjectNumFloats;
+    }
+
+    this.voBufferSize = this.verletObjectsSize;
+    this.voBuffers = new Array(2);
+    for (let i = 0; i < 2; ++i) {
+      this.voBuffers[i] = this.device.createBuffer({
+        size: this.voBufferSize,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Float32Array(this.voBuffers[i].getMappedRange()).set(this.verletObjectsData);
+      this.voBuffers[i].unmap();
+    }
+
     const pipelineLayoutDesc = { bindGroupLayouts: [renderBindGroupLayout] };
     const layout = this.device.createPipelineLayout(pipelineLayoutDesc);
 
     // 🎭 Shader Stages
     const vertex: GPUVertexState = {
       module: quad.shaderModule,
-      entryPoint: 'main',
+      entryPoint: 'vertex_main',
       buffers: quad.getBufferDescription()
     };
 
@@ -212,8 +285,8 @@ export default class Renderer {
     };
 
     const fragment: GPUFragmentState = {
-      module: this.fragModule,
-      entryPoint: 'main',
+      module: quad.shaderModule,
+      entryPoint: 'fragment_main',
       targets: [colorState]
     };
 
@@ -269,33 +342,11 @@ export default class Renderer {
   }
 
   // ✍️ Write commands to send to the GPU
-  encodeCommands() {
-    let colorAttachment: GPURenderPassColorAttachment = {
-      view: this.colorTextureView,
-      clearValue: { r: 0.0, g: 0, b: 0, a: 1 },
-      loadOp: 'clear',
-      storeOp: 'store'
-    };
-
-    const depthAttachment: GPURenderPassDepthStencilAttachment = {
-      view: this.depthTextureView,
-      depthClearValue: 1,
-      depthLoadOp: 'clear',
-      depthStoreOp: 'store',
-      stencilClearValue: 0,
-      stencilLoadOp: 'clear',
-      stencilStoreOp: 'store'
-    };
-
-    const renderPassDesc: GPURenderPassDescriptor = {
-      colorAttachments: [colorAttachment],
-      depthStencilAttachment: depthAttachment
-    };
-
+  encodeCommands(t: number) {
     this.commandEncoder = this.device.createCommandEncoder();
 
     // 🖌️ Encode drawing commands
-    this.passEncoder = this.commandEncoder.beginRenderPass(renderPassDesc);
+    this.passEncoder = this.commandEncoder.beginRenderPass(this.renderPassDesc);
     this.passEncoder.setPipeline(this.pipeline);
     this.passEncoder.setViewport(
       0,
@@ -313,8 +364,9 @@ export default class Renderer {
     );
     this.passEncoder.setBindGroup(0, this.uniformBindGroup);
     this.passEncoder.setVertexBuffer(0, quad.verticesBuffer);
+    this.passEncoder.setVertexBuffer(1, this.voBuffers[(t + 1) % 2]);
     this.passEncoder.setIndexBuffer(quad.indexBuffer, 'uint16');
-    this.passEncoder.drawIndexed(6, 2);
+    this.passEncoder.drawIndexed(6, this.numVerletObjects);
     this.passEncoder.end();
 
     this.queue.submit([this.commandEncoder.finish()]);
@@ -334,6 +386,7 @@ export default class Renderer {
   }
 
   async render() {
+    let t = 0;
     do {
       const now = performance.now();
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
@@ -342,8 +395,7 @@ export default class Renderer {
       // this.overlayElement.innerText = `${Math.round((1/deltaTime) * 100) / 100}`;
 
       // ⏭ Acquire next image from context
-      this.colorTexture = this.context.getCurrentTexture();
-      this.colorTextureView = this.colorTexture.createView();
+      this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView());
 
       let clickPointX = 0;
       let clickPointY = 0;
@@ -355,10 +407,11 @@ export default class Renderer {
       this.updateSimParams(totalTime, deltaTime, clickPointX, clickPointY);
 
       // 📦 Write and submit commands to queue
-      this.encodeCommands();
+      this.encodeCommands(t);
 
       // Wait for repaint
       this.lastFrameMS = now;
+      t++;
       await this.sleep();
     } while (this.running);
   }

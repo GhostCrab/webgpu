@@ -1,3 +1,5 @@
+import shaderCode from './shaders/instancedCircle.wgsl';
+
 export class Quad {
   vertexSize = 4 * 6;
   vertexCount = 6;
@@ -17,6 +19,8 @@ export class Quad {
   verticesBuffer: GPUBuffer;
   indexBuffer: GPUBuffer;
 
+  shaderModule: GPUShaderModule;
+
   constructor(device: GPUDevice) {
     this.verticesBuffer = device.createBuffer({
       size: this.vertexArray.byteLength,
@@ -33,30 +37,13 @@ export class Quad {
     });
     new Uint16Array(this.indexBuffer.getMappedRange()).set(this.indexArray);
     this.indexBuffer.unmap();
+
+    this.shaderModule = device.createShaderModule({
+      code: shaderCode
+    });
   }
 
-  bufferDescription(): GPUVertexBufferLayout[] {
-    const positionAttribDesc: GPUVertexAttribute = {
-      shaderLocation: 0, // [[location(0)]]
-      offset: 0,
-      format: 'float32x3'
-    };
-    const colorAttribDesc: GPUVertexAttribute = {
-      shaderLocation: 1, // [[location(1)]]
-      offset: 0,
-      format: 'float32x3'
-    };
-    const positionBufferDesc: GPUVertexBufferLayout = {
-      attributes: [positionAttribDesc],
-      arrayStride: 4 * 3, // sizeof(float) * 3
-      stepMode: 'vertex'
-    };
-    const colorBufferDesc: GPUVertexBufferLayout = {
-      attributes: [colorAttribDesc],
-      arrayStride: 4 * 3, // sizeof(float) * 3
-      stepMode: 'vertex'
-    };
-
+  getBufferDescription(): GPUVertexBufferLayout[] {
     return [{
       // vertex buffer
       arrayStride: this.vertexSize,
