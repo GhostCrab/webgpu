@@ -329,16 +329,7 @@ export default class Renderer {
       this.context.configure(canvasConfig);
     }
 
-    const depthTextureDesc: GPUTextureDescriptor = {
-      size: [this.canvas.width, this.canvas.height, 1],
-      sampleCount: 1,
-      dimension: '2d',
-      format: 'depth24plus-stencil8',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
-    };
-
-    this.depthTexture = this.device.createTexture(depthTextureDesc);
-    this.depthTextureView = this.depthTexture.createView();
+    // TODO: resize this.renderPassDesc
   }
 
   // ✍️ Write commands to send to the GPU
@@ -395,6 +386,9 @@ export default class Renderer {
       // this.overlayElement.innerText = `${Math.round((1/deltaTime) * 100) / 100}`;
 
       // ⏭ Acquire next image from context
+      this.colorTexture = this.context.getCurrentTexture();
+      this.colorTextureView = this.colorTexture.createView();
+
       this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView());
 
       let clickPointX = 0;
