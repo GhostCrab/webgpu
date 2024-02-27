@@ -19,8 +19,6 @@ export class Quad {
   verticesBuffer: GPUBuffer;
   indexBuffer: GPUBuffer;
 
-  shaderModule: GPUShaderModule;
-
   constructor(device: GPUDevice) {
     this.verticesBuffer = device.createBuffer({
       size: this.vertexArray.byteLength,
@@ -37,14 +35,10 @@ export class Quad {
     });
     new Uint16Array(this.indexBuffer.getMappedRange()).set(this.indexArray);
     this.indexBuffer.unmap();
-
-    this.shaderModule = device.createShaderModule({
-      code: shaderCode
-    });
   }
 
-  getBufferDescription(): GPUVertexBufferLayout[] {
-    return [{
+  getBufferDescription(): GPUVertexBufferLayout {
+    return {
       // vertex buffer
       arrayStride: this.vertexSize,
       stepMode: 'vertex',
@@ -58,34 +52,14 @@ export class Quad {
           shaderLocation: 1,
           offset: this.uvOffset,
           format: 'float32x2',
-        },],
-      }, {
-        // instanced particles buffer
-        arrayStride: 16 * 4,
-        stepMode: 'instance',
-        attributes: [{
-            // instance position
-            shaderLocation: 2,
-            offset: 0,
-            format: 'float32x4',
-          }, {
-            // instance previous position
-            shaderLocation: 3,
-            offset: 4 * 4,
-            format: 'float32x4',
-          }, {
-            // instance acceleration
-            shaderLocation: 4,
-            offset: 8 * 4,
-            format: 'float32x4',
-          }, {
-            // instance rgb-Radius
-            shaderLocation: 5,
-            offset: 12 * 4,
-            format: 'float32x4',
-          },
-        ],
-      }
-    ];
+        },
+      ],
+    }
+  }
+
+  render(passEncoder: GPURenderPassEncoder, count: number) {
+    passEncoder.setVertexBuffer(0, this.verticesBuffer);
+    passEncoder.setIndexBuffer(this.indexBuffer, 'uint16');
+    passEncoder.drawIndexed(6, count);
   }
 }

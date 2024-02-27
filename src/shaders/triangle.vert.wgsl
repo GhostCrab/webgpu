@@ -18,12 +18,6 @@ struct VSOut {
 @vertex
 fn main(@location(0) inPos: vec4<f32>,
         @location(1) uv: vec2<f32>) -> VSOut {
-  var rotMatrix = mat4x4<f32>(
-    cos(simParams.totalTime), -sin(simParams.totalTime), 0, 0,
-    sin(simParams.totalTime), cos(simParams.totalTime), 0, 0,
-    0, 0, 1, 0,
-    0, 0, 0, 1
-  );
 
   var scaleMatrix = mat4x4<f32>(
     300, 0, 0, 0,
@@ -32,7 +26,7 @@ fn main(@location(0) inPos: vec4<f32>,
     0, 0, 0, 1
   );
   var vsOut: VSOut;
-  vsOut.position = (mvp * (scaleMatrix * (rotMatrix * inPos)));
+  vsOut.position = (mvp * (scaleMatrix * inPos));
   vsOut.uv = uv;
   return vsOut;
 }

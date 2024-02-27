@@ -6,7 +6,7 @@
     "scripts": {
         "start": "npm i && npm run build && npm run dev",
         "dev": "http-server",
-        "build": "cross-env NODE_ENV=production ts-node webpack.ts --watch"
+        "build": "cross-env NODE_ENV=production ts-node webpack.ts --watch --verbose"
     },
     "repository": {
         "type": "git",

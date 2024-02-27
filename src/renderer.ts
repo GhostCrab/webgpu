@@ -1,40 +1,14 @@
-import { mat4, vec3 } from 'wgpu-matrix';
-import { Quad } from './quad';
+import { mat4 } from 'wgpu-matrix';
 
-import vertShaderCode from './shaders/triangle.vert.wgsl';
-import fragShaderCode from './shaders/triangle.frag.wgsl';
 import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
-
-function lerp( a: number, b: number, alpha: number ) {
-  return a + alpha * ( b - a );
- }
-
-function HSVtoRGB(h: number, s: number, v: number) {
-  let r: number, g: number, b: number, i: number, f: number, p: number, q: number, t: number;
-
-  i = Math.floor(h * 6);
-  f = h * 6 - i;
-  p = v * (1 - s);
-  q = v * (1 - f * s);
-  t = v * (1 - (1 - f) * s);
-  switch (i % 6) {
-      case 0: r = v, g = t, b = p; break;
-      case 1: r = q, g = v, b = p; break;
-      case 2: r = p, g = v, b = t; break;
-      case 3: r = p, g = q, b = v; break;
-      case 4: r = t, g = p, b = v; break;
-      case 5: r = v, g = p, b = q; break;
-  }
-
-  return { r, g, b };
-}
+import { Verlet } from './verlet/verlet';
 
 // Simulation Parameters Buffer Data
 // f32 deltaTime, f32 totalTime, f32 constrainRadius, f32 boxDim, vec4<f32> constrainCenter, vec4<f32> clickPoint
 const simParamsArrayLength = 12;
 const simParams = new Float32Array(simParamsArrayLength);
-let quad: Quad;
+
 let mvp = mat4.identity();
 
 export default class Renderer {
@@ -47,18 +21,12 @@ export default class Renderer {
 
   // 🎞️ Frame Backings
   context: GPUCanvasContext;
-  renderPassDesc: RenderPassDescriptor;  
-  colorTexture: GPUTexture;
-  colorTextureView: GPUTextureView;
-  depthTexture: GPUTexture;
-  depthTextureView: GPUTextureView;
+  renderPassDesc: RenderPassDescriptor;
 
   // 🔺 Resources
   mvpBuffer: GPUBuffer;
   simParamsBuffer: GPUBuffer;
   uniformBindGroup: GPUBindGroup;
-  vertModule: GPUShaderModule;
-  fragModule: GPUShaderModule;
   pipeline: GPURenderPipeline;
 
   commandEncoder: GPUCommandEncoder;
@@ -69,19 +37,12 @@ export default class Renderer {
 
   overlayElement: HTMLElement;
 
-  // Verlet Objects
-  verletObjectRadius: number;
-  numVerletObjects: number;
-  verletObjectNumFloats: number;
-  verletObjectsData: Float32Array;
-  verletObjectsSize: number;
-  voBufferSize: number;
-  voBuffers: GPUBuffer[];
-
   // State
   running = true;
   devicePixelRatio: number;
   renderStats: RenderStats = new RenderStats();
+
+  verlet: Verlet;
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -156,27 +117,8 @@ export default class Renderer {
       return buffer;
     };
 
-    quad = new Quad(this.device);
-
-    // 🖍️ Shaders
-    const vsmDesc = {
-      code: vertShaderCode
-    };
-    this.vertModule = this.device.createShaderModule(vsmDesc);
-
-    const fsmDesc = {
-      code: fragShaderCode
-    };
-    this.fragModule = this.device.createShaderModule(fsmDesc);
-
     // ⚗️ Graphics Pipeline
-
-    // 🌑 Depth
-    const depthStencil: GPUDepthStencilState = {
-      depthWriteEnabled: true,
-      depthCompare: 'less',
-      format: 'depth24plus-stencil8'
-    };
+    this.renderPassDesc = new RenderPassDescriptor(this.device, this.canvas);
 
     // 🦄 Uniform Data
     const renderBindGroupLayout = this.device.createBindGroupLayout({
@@ -231,88 +173,11 @@ export default class Renderer {
       }]
     });
 
-    this.verletObjectRadius = 10;
-    this.numVerletObjects = 100;
-    // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,
-    // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR
-    this.verletObjectNumFloats = 16;
-    this.verletObjectsData = new Float32Array(this.verletObjectNumFloats * this.numVerletObjects);
-    this.verletObjectsSize = Float32Array.BYTES_PER_ELEMENT * this.verletObjectNumFloats * this.numVerletObjects;
-  
-    for (let i = 0; i < this.numVerletObjects * this.verletObjectNumFloats; ) {
-      const xpos = (Math.random() * this.canvas.width)  - (this.canvas.width / 2);
-      const ypos = (Math.random() * this.canvas.height) - (this.canvas.height / 2);
-      this.verletObjectsData[i] = xpos;
-      this.verletObjectsData[i+1] = ypos;
-      this.verletObjectsData[i+4] = xpos;
-      this.verletObjectsData[i+5] = ypos;
-  
-      const rgb = HSVtoRGB(0, lerp(0.6, 0.9, Math.random()), 1);
-  
-      this.verletObjectsData[i+12] = rgb.r;
-      this.verletObjectsData[i+13] = rgb.g;
-      this.verletObjectsData[i+14] = rgb.b;
-  
-      this.verletObjectsData[i+15] = this.verletObjectRadius;
-      i += this.verletObjectNumFloats;
-    }
-
-    this.voBufferSize = this.verletObjectsSize;
-    this.voBuffers = new Array(2);
-    for (let i = 0; i < 2; ++i) {
-      this.voBuffers[i] = this.device.createBuffer({
-        size: this.voBufferSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Float32Array(this.voBuffers[i].getMappedRange()).set(this.verletObjectsData);
-      this.voBuffers[i].unmap();
-    }
-
     const pipelineLayoutDesc = { bindGroupLayouts: [renderBindGroupLayout] };
     const layout = this.device.createPipelineLayout(pipelineLayoutDesc);
 
-    // 🎭 Shader Stages
-    const vertex: GPUVertexState = {
-      module: quad.shaderModule,
-      entryPoint: 'vertex_main',
-      buffers: quad.getBufferDescription()
-    };
-
-    // 🌀 Color/Blend State
-    const colorState: GPUColorTargetState = {
-      format: 'bgra8unorm'
-    };
-
-    const fragment: GPUFragmentState = {
-      module: quad.shaderModule,
-      entryPoint: 'fragment_main',
-      targets: [colorState]
-    };
-
-    // 🟨 Rasterization
-    const primitive: GPUPrimitiveState = {
-      frontFace: 'cw',
-      cullMode: 'none',
-      topology: 'triangle-list'
-    };
-
-    const multisample: GPUMultisampleState = {
-      count: 1
-    };
-
-    const pipelineDesc: GPURenderPipelineDescriptor = {
-      layout,
-
-      vertex,
-      fragment,
-
-      primitive,
-      depthStencil,
-
-      multisample
-    };
-    this.pipeline = this.device.createRenderPipeline(pipelineDesc);
+    this.verlet = new Verlet(this.canvas.height);
+    this.verlet.initRenderer(layout, this.device);
   }
 
   // ↙️ Resize swapchain, frame buffer attachments
@@ -322,9 +187,9 @@ export default class Renderer {
       this.context = this.canvas.getContext('webgpu');
       const canvasConfig: GPUCanvasConfiguration = {
         device: this.device,
-        format: 'bgra8unorm',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-        alphaMode: 'opaque'
+        format: navigator.gpu.getPreferredCanvasFormat(),
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        alphaMode: 'premultiplied',
       };
       this.context.configure(canvasConfig);
     }
@@ -333,31 +198,17 @@ export default class Renderer {
   }
 
   // ✍️ Write commands to send to the GPU
-  encodeCommands(t: number) {
+  encodeCommands(frame: number) {
     this.commandEncoder = this.device.createCommandEncoder();
 
     // 🖌️ Encode drawing commands
     this.passEncoder = this.commandEncoder.beginRenderPass(this.renderPassDesc);
-    this.passEncoder.setPipeline(this.pipeline);
-    this.passEncoder.setViewport(
-      0,
-      0,
-      this.canvas.width,
-      this.canvas.height,
-      0,
-      1
-    );
-    this.passEncoder.setScissorRect(
-      0,
-      0,
-      this.canvas.width,
-      this.canvas.height
-    );
     this.passEncoder.setBindGroup(0, this.uniformBindGroup);
-    this.passEncoder.setVertexBuffer(0, quad.verticesBuffer);
-    this.passEncoder.setVertexBuffer(1, this.voBuffers[(t + 1) % 2]);
-    this.passEncoder.setIndexBuffer(quad.indexBuffer, 'uint16');
-    this.passEncoder.drawIndexed(6, this.numVerletObjects);
+    this.passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
+    this.passEncoder.setScissorRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    this.verlet.render(this.passEncoder, frame);
+    
     this.passEncoder.end();
 
     this.queue.submit([this.commandEncoder.finish()]);
@@ -383,12 +234,8 @@ export default class Renderer {
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
       const totalTime = now / 1000;
       this.renderStats.updateFPS(deltaTime, this.overlayElement);
-      // this.overlayElement.innerText = `${Math.round((1/deltaTime) * 100) / 100}`;
 
       // ⏭ Acquire next image from context
-      this.colorTexture = this.context.getCurrentTexture();
-      this.colorTextureView = this.colorTexture.createView();
-
       this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView());
 
       let clickPointX = 0;
