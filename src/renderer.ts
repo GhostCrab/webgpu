@@ -222,24 +222,22 @@ export default class Renderer {
       // }
 
       let commandEncoder = this.device.createCommandEncoder();
+      this.updateSimParams(totalTime, deltaTime, clickPointX, clickPointY);
 
-      const stepCount = 1;
+      const stepCount = 3;
       for (let i = 0; i < stepCount; i++) {
-        this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
         let computePassEncoder = commandEncoder.beginComputePass();
         computePassEncoder.setBindGroup(0, this.uniformBindGroup);
-        this.verlet.compute(computePassEncoder, ++frame);
+        this.verlet.compute(computePassEncoder);
         computePassEncoder.end();
       }
-
-      this.updateSimParams(totalTime, deltaTime, clickPointX, clickPointY);
       
       let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
       passEncoder.setBindGroup(0, this.uniformBindGroup);
       passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
       passEncoder.setScissorRect(0, 0, this.canvas.width, this.canvas.height);
       
-      this.verlet.render(passEncoder, frame);
+      this.verlet.render(passEncoder);
       
       passEncoder.end();
   

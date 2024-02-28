@@ -39,7 +39,7 @@ export class VerletComputer {
   binReadBuffer: GPUBuffer;
   
   uniformBindGroup: GPUBindGroup;
-  storageBindGroups: GPUBindGroup[];
+  storageBindGroup: GPUBindGroup;
 
   constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.shaderModule = device.createShaderModule({
@@ -56,19 +56,15 @@ export class VerletComputer {
 
     this.storageBindGroupLayout = device.createBindGroupLayout({
       entries: [{
-        binding:  0, // verletObjectsIn
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'read-only-storage' },
-      }, {
-        binding:  1, // verletObjectsOut
+        binding: 0, // verletObjects
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'storage' },
       }, {
-        binding:  2, // binIn
+        binding: 1, // binIn
         visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'read-only-storage' },
+        buffer: { type: 'storage' },
       }, {
-        binding:  3, // binOut
+        binding: 2, // binOut
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'storage' },
       }]
@@ -117,7 +113,7 @@ export class VerletComputer {
     this.passDescriptor = {};
   }
 
-  initBuffers(device: GPUDevice, bounds: number, objectCount: number, voBuffers: GPUBuffer[]) {
+  initBuffers(device: GPUDevice, bounds: number, objectCount: number, voBuffer: GPUBuffer) {
     this.objectCount = objectCount;
     const gridPixelDim = bounds;
     const binParamsArrayLength = 4;
@@ -162,12 +158,15 @@ export class VerletComputer {
     
     this.binInfoBufferSize = this.binReindexBufferOffset + this.binReindexBufferSize;
     this.binInfoBuffers = new Array(2);
-    for (let i = 0; i < 2; ++i) {
-      this.binInfoBuffers[i] = device.createBuffer({
-        size: this.binInfoBufferSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-      });
-    }
+    this.binInfoBuffers[0] = device.createBuffer({
+      size: this.binInfoBufferSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+    });
+
+    this.binInfoBuffers[1] = device.createBuffer({
+      size: this.binInfoBufferSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+    });
 
     this.binReadBuffer = device.createBuffer({
       size: this.binBufferSize,
@@ -183,49 +182,39 @@ export class VerletComputer {
       ]
     });
 
-    this.storageBindGroups = new Array(2);
-    for (let i = 0; i < 2; ++i) {
-      this.storageBindGroups[i] = device.createBindGroup({
-        layout: this.mainPipeline.getBindGroupLayout(2),
-        entries: [{
-            binding: 0,
-            resource: {
-              buffer: voBuffers[i],
-              offset: 0,
-              size: voBuffers[i].size,
-            },
-          }, {
-            binding: 1,
-            resource: {
-              buffer: voBuffers[(i + 1) % 2],
-              offset: 0,
-              size: voBuffers[(i + 1) % 2].size,
-            },
-          }, {
-            binding: 2,
-            resource: {
-              buffer: this.binInfoBuffers[i],
-              offset: 0,
-              size: this.binInfoBufferSize,
-            },
-          }, {
-            binding: 3,
-            resource: {
-              buffer: this.binInfoBuffers[(i + 1) % 2],
-              offset: 0,
-              size: this.binInfoBufferSize,
-            },
+    this.storageBindGroup = device.createBindGroup({
+      layout: this.mainPipeline.getBindGroupLayout(2),
+      entries: [{
+          binding: 0,
+          resource: {
+            buffer: voBuffer,
+            offset: 0,
+            size: voBuffer.size,
           },
-        ],
-      });
-    }
+        }, {
+          binding: 1,
+          resource: {
+            buffer: this.binInfoBuffers[0],
+            offset: 0,
+            size: this.binInfoBufferSize,
+          },
+        }, {
+          binding: 2,
+          resource: {
+            buffer: this.binInfoBuffers[1],
+            offset: 0,
+            size: this.binInfoBufferSize,
+          },
+        },
+      ],
+    });
   }
 
-  compute(passEncoder: GPUComputePassEncoder, frame: number) {
+  compute(passEncoder: GPUComputePassEncoder) {
     const workgroupCount = Math.ceil(this.objectCount / 64);
 
     passEncoder.setBindGroup(1, this.uniformBindGroup);
-    passEncoder.setBindGroup(2, this.storageBindGroups[frame % 2]);
+    passEncoder.setBindGroup(2, this.storageBindGroup);
         
     passEncoder.setPipeline(this.mainPipeline);
     passEncoder.dispatchWorkgroups(workgroupCount);

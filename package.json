@@ -5,8 +5,9 @@
     "main": "dist/main.js",
     "scripts": {
         "start": "npm i && npm run build && npm run dev",
-        "dev": "http-server",
-        "build": "cross-env NODE_ENV=production ts-node webpack.ts --watch --verbose"
+        "serve": "http-server",
+        "dev": "cross-env NODE_ENV=development ts-node webpack.ts --watch",
+        "prod": "cross-env NODE_ENV=production ts-node webpack.ts --watch"
     },
     "repository": {
         "type": "git",

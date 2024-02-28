@@ -41,12 +41,9 @@ struct BinInfoOut {
 
 @group(1) @binding(0) var<uniform> binParams: BinParams;
 
-@group(2) @binding(0) var<storage, read>       verletObjectsIn: array<VerletObject>;
-@group(2) @binding(1) var<storage, read_write> verletObjectsOut: array<VerletObject>;
-
-// spatial binning
-@group(2) @binding(2) var<storage, read>       binIn: BinInfoIn;
-@group(2) @binding(3) var<storage, read_write> binOut: BinInfoOut;
+@group(2) @binding(0) var<storage, read_write> verletObjects: array<VerletObject>;
+@group(2) @binding(1) var<storage, read_write> binIn: BinInfoIn;
+@group(2) @binding(2) var<storage, read_write> binOut: BinInfoOut;
 
 fn oneToTwo(index: i32, gridWidth: i32) -> vec2<i32> {
   var row = index / gridWidth;
@@ -64,11 +61,11 @@ fn twoToOne(index: vec2<i32> , gridWidth: i32) -> i32 {
 fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var index = u32(GlobalInvocationID.x);
 
-  if (index >= arrayLength(&verletObjectsIn)) {
+  if (index >= arrayLength(&verletObjects)) {
     return;
   }
 
-  if (verletObjectsIn[index].colorAndRadius.w == 0) {
+  if (verletObjects[index].colorAndRadius.w == 0) {
     return;
   }
 
@@ -79,15 +76,15 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var constrainPos = params.constrainCenter.xy;
   var constrainRadius = params.constrainRadius;
 
-  var pos = verletObjectsIn[index].pos.xy;
-  var prevPos = verletObjectsIn[index].prevPos.xy;
+  var pos = verletObjects[index].pos.xy;
+  var prevPos = verletObjects[index].prevPos.xy;
 
-  var radius = verletObjectsIn[index].colorAndRadius.w;
+  var radius = verletObjects[index].colorAndRadius.w;
 
-  var accel = verletObjectsIn[index].accel.xy;
+  // var accel = verletObjects[index].accel.xy;
 
   // accelerate
-  accel += vec2(0, 270.0);
+  accel = vec2(0, 0);
 
   // accelerate
   if (params.clickPoint.x != 0 && params.clickPoint.y != 0) {
@@ -119,9 +116,9 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
       for (var i = binIn.binPrefixSum[neighborIndex - 1]; i < binIn.binPrefixSum[neighborIndex]; i++) {
         var otherIndex = binIn.binReindex[i];
-        if (otherIndex != index && verletObjectsIn[otherIndex].colorAndRadius.w == 0) {
-          var _pos = verletObjectsIn[otherIndex].pos.xy;
-          var _radius = verletObjectsIn[otherIndex].colorAndRadius.w;
+        if (otherIndex != index && verletObjects[otherIndex].colorAndRadius.w == 0) {
+          var _pos = verletObjects[otherIndex].pos.xy;
+          var _radius = verletObjects[otherIndex].colorAndRadius.w;
 
           var v = pos - _pos;
           var dist2 = (v.x * v.x) + (v.y * v.y);
@@ -139,13 +136,13 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       }
     }
   } else if (useCollide) {
-    for (var i = 0u; i < arrayLength(&verletObjectsIn); i++) {
-      if (i == index || verletObjectsIn[i].colorAndRadius.w == 0) {
+    for (var i = 0u; i < arrayLength(&verletObjects); i++) {
+      if (i == index || verletObjects[i].colorAndRadius.w == 0) {
         continue;
       }
 
-      var _pos = verletObjectsIn[i].pos.xy;
-      var _radius = verletObjectsIn[i].colorAndRadius.w;
+      var _pos = verletObjects[i].pos.xy;
+      var _radius = verletObjects[i].colorAndRadius.w;
 
       var v = pos - _pos;
       var dist2 = (v.x * v.x) + (v.y * v.y);
@@ -187,10 +184,10 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
   // load back
   {
-    verletObjectsOut[index].pos = vec4(pos.xy, 0, 0);
-    verletObjectsOut[index].prevPos = vec4(prevPos.xy, 0, 0);
+    // verletObjects[index].accel = vec4(0);
+    verletObjects[index].pos = vec4(pos.xy, 0, 0);
+    verletObjects[index].prevPos = vec4(prevPos.xy, 0, 0);
 
-    // binOut.bin[index] = i32(pos.x / f32(binParams.count)) + (i32(pos.y / f32(binParams.count)) * binParams.x);
     var binx = i32((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
     var biny = i32((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
     var binIndex = twoToOne(vec2<i32>(binx, biny), binParams.x);
@@ -208,7 +205,7 @@ fn binSum(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
   storageBarrier();
 
-  if (index < arrayLength(&verletObjectsIn)) {
+  if (index < arrayLength(&verletObjects)) {
     atomicAdd(&binOut.binSum[binIn.bin[index]], 1u);
   }
 }
@@ -239,7 +236,7 @@ fn binPrefixSum(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 fn binReindex(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var index = u32(GlobalInvocationID.x);
 
-  if (index >= arrayLength(&verletObjectsIn)) {
+  if (index >= arrayLength(&verletObjects)) {
     return;
   }
 

@@ -38,7 +38,7 @@ export class Verlet {
   computer: VerletComputer;
 
   bounds: number;
-  buffers: GPUBuffer[];
+  buffer: GPUBuffer;
 
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
@@ -75,25 +75,22 @@ export class Verlet {
   }
 
   initBuffers(device: GPUDevice) {
-    this.buffers = new Array(2);
-    for (let i = 0; i < 2; ++i) {
-      this.buffers[i] = device.createBuffer({
-        size: this.dataArray.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Float32Array(this.buffers[i].getMappedRange()).set(this.dataArray);
-      this.buffers[i].unmap();
-    }
+    this.buffer = device.createBuffer({
+      size: this.dataArray.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Float32Array(this.buffer.getMappedRange()).set(this.dataArray);
+    this.buffer.unmap();
 
-    this.computer.initBuffers(device, this.bounds, this.objectCount, this.buffers);
+    this.computer.initBuffers(device, this.bounds, this.objectCount, this.buffer);
   }
 
-  render(passEncoder: GPURenderPassEncoder, frame: number) {
-    this.renderer.render(passEncoder, this.buffers[(frame + 1) % 2], this.objectCount);
+  render(passEncoder: GPURenderPassEncoder) {
+    this.renderer.render(passEncoder, this.buffer, this.objectCount);
   }
 
-  compute(passEncoder: GPUComputePassEncoder, frame: number) {
-    this.computer.compute(passEncoder, frame);
+  compute(passEncoder: GPUComputePassEncoder) {
+    this.computer.compute(passEncoder);
   }
 }
