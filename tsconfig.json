@@ -30,7 +30,8 @@
   "include": [
     "definitions.d.ts",
     "src/**/*",
-    "node_modules/@webgpu/types/**/*"
+    "node_modules/@webgpu/types/**/*",
+    "node_modules/wgpu-matrix/dist/2.x/**/*"
   ],
   "compileOnSave": false,
   "buildOnSave": false

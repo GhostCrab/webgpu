@@ -1,3 +1,4 @@
+import { VerletComputer } from "./verlet-computer";
 import { VerletRenderer } from "./verlet-renderer";
 
 function lerp(a: number, b: number, alpha: number) {
@@ -34,10 +35,16 @@ export class Verlet {
   dataArray: Float32Array;
 
   renderer: VerletRenderer;
+  computer: VerletComputer;
 
-  constructor(bounds: number) {
-    this.objectRadius = .3;
-    this.objectCount = 3000000;
+  bounds: number;
+  buffers: GPUBuffer[];
+
+  constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
+    this.bounds = bounds;
+
+    this.objectRadius = 6;
+    this.objectCount = 100;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR
     this.dataNumFloats = 16;
@@ -60,14 +67,33 @@ export class Verlet {
       this.dataArray[i+15] = this.objectRadius;
       i += this.dataNumFloats;
     }
+
+    this.renderer = new VerletRenderer(globalUniformBindGroupLayout, device);
+    this.computer = new VerletComputer(globalUniformBindGroupLayout, device);
+
+    this.initBuffers(device);
   }
 
-  initRenderer(layout: GPUPipelineLayout, device: GPUDevice) {
-    this.renderer = new VerletRenderer(layout, device);
-    this.renderer.initBuffers(device, this.dataArray, this.objectCount);
+  initBuffers(device: GPUDevice) {
+    this.buffers = new Array(2);
+    for (let i = 0; i < 2; ++i) {
+      this.buffers[i] = device.createBuffer({
+        size: this.dataArray.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Float32Array(this.buffers[i].getMappedRange()).set(this.dataArray);
+      this.buffers[i].unmap();
+    }
+
+    this.computer.initBuffers(device, this.bounds, this.objectCount, this.buffers);
   }
 
   render(passEncoder: GPURenderPassEncoder, frame: number) {
-    this.renderer.render(passEncoder, frame);
+    this.renderer.render(passEncoder, this.buffers[(frame + 1) % 2], this.objectCount);
+  }
+
+  compute(passEncoder: GPUComputePassEncoder, frame: number) {
+    this.computer.compute(passEncoder, frame);
   }
 }

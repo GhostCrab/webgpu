@@ -29,9 +29,6 @@ export default class Renderer {
   uniformBindGroup: GPUBindGroup;
   pipeline: GPURenderPipeline;
 
-  commandEncoder: GPUCommandEncoder;
-  passEncoder: GPURenderPassEncoder;
-
   startFrameMS: number;
   lastFrameMS: number;
 
@@ -121,7 +118,7 @@ export default class Renderer {
     this.renderPassDesc = new RenderPassDescriptor(this.device, this.canvas);
 
     // 🦄 Uniform Data
-    const renderBindGroupLayout = this.device.createBindGroupLayout({
+    const globalUniformBindGroupLayout = this.device.createBindGroupLayout({
       label: 'renderBindGroupLayout',
       entries: [{
           binding: 0, // mvp
@@ -129,7 +126,7 @@ export default class Renderer {
           buffer: { type: 'uniform' }
         }, {
           binding: 1, // params
-          visibility: GPUShaderStage.VERTEX,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
           buffer: { type: 'uniform' }
         }
       ]
@@ -163,7 +160,7 @@ export default class Renderer {
     );
 
     this.uniformBindGroup = this.device.createBindGroup({
-      layout: renderBindGroupLayout,
+      layout: globalUniformBindGroupLayout,
       entries: [{
         binding: 0,
         resource: { buffer: this.mvpBuffer }
@@ -173,11 +170,7 @@ export default class Renderer {
       }]
     });
 
-    const pipelineLayoutDesc = { bindGroupLayouts: [renderBindGroupLayout] };
-    const layout = this.device.createPipelineLayout(pipelineLayoutDesc);
-
-    this.verlet = new Verlet(this.canvas.height);
-    this.verlet.initRenderer(layout, this.device);
+    this.verlet = new Verlet(this.canvas.height, globalUniformBindGroupLayout, this.device);
   }
 
   // ↙️ Resize swapchain, frame buffer attachments
@@ -197,23 +190,6 @@ export default class Renderer {
     // TODO: resize this.renderPassDesc
   }
 
-  // ✍️ Write commands to send to the GPU
-  encodeCommands(frame: number) {
-    this.commandEncoder = this.device.createCommandEncoder();
-
-    // 🖌️ Encode drawing commands
-    this.passEncoder = this.commandEncoder.beginRenderPass(this.renderPassDesc);
-    this.passEncoder.setBindGroup(0, this.uniformBindGroup);
-    this.passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
-    this.passEncoder.setScissorRect(0, 0, this.canvas.width, this.canvas.height);
-    
-    this.verlet.render(this.passEncoder, frame);
-    
-    this.passEncoder.end();
-
-    this.queue.submit([this.commandEncoder.finish()]);
-  }
-
   updateSimParams(
     totalTime: number,
     deltaTime: number,
@@ -228,7 +204,7 @@ export default class Renderer {
   }
 
   async render() {
-    let t = 0;
+    let frame = 0;
     do {
       const now = performance.now();
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
@@ -245,14 +221,33 @@ export default class Renderer {
       //   clickPointY = (input.analog.clickY * devicePixelRatio) - (canvas.height / 2);
       // }
 
-      this.updateSimParams(totalTime, deltaTime, clickPointX, clickPointY);
+      let commandEncoder = this.device.createCommandEncoder();
 
-      // 📦 Write and submit commands to queue
-      this.encodeCommands(t);
+      const stepCount = 1;
+      for (let i = 0; i < stepCount; i++) {
+        this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
+        let computePassEncoder = commandEncoder.beginComputePass();
+        computePassEncoder.setBindGroup(0, this.uniformBindGroup);
+        this.verlet.compute(computePassEncoder, ++frame);
+        computePassEncoder.end();
+      }
+
+      this.updateSimParams(totalTime, deltaTime, clickPointX, clickPointY);
+      
+      let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
+      passEncoder.setBindGroup(0, this.uniformBindGroup);
+      passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
+      passEncoder.setScissorRect(0, 0, this.canvas.width, this.canvas.height);
+      
+      this.verlet.render(passEncoder, frame);
+      
+      passEncoder.end();
+  
+      this.queue.submit([commandEncoder.finish()]);
 
       // Wait for repaint
       this.lastFrameMS = now;
-      t++;
+      
       await this.sleep();
     } while (this.running);
   }

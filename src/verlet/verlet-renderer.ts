@@ -1,7 +1,8 @@
 import { Quad } from "../quad";
-import shaderCode from './verlet.wgsl';
+import shaderCode from './verlet-renderer.wgsl';
 
 export class VerletRenderer implements GPURenderPipelineDescriptor {
+  // GPURenderPipelineDescriptor members
   layout: GPUPipelineLayout;
   vertex: GPUVertexState;
   fragment: GPUFragmentState;
@@ -13,14 +14,13 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
 
   shaderModule: GPUShaderModule;
 
-  buffers: GPUBuffer[];
-
   quad: Quad;
-  quadCount: number;
   
-  constructor(layout: GPUPipelineLayout, device: GPUDevice) {
+  constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.quad = new Quad(device);
-    this.layout = layout;
+
+    const pipelineLayoutDesc = { bindGroupLayouts: [globalUniformBindGroupLayout] };
+    this.layout = device.createPipelineLayout(pipelineLayoutDesc);
 
     this.shaderModule = device.createShaderModule({
       code: shaderCode
@@ -75,20 +75,6 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
     this.pipeline = device.createRenderPipeline(this);
   }
 
-  initBuffers(device: GPUDevice, dataArray: Float32Array, quadCount: number) {
-    this.quadCount = quadCount;
-    this.buffers = new Array(2);
-    for (let i = 0; i < 2; ++i) {
-      this.buffers[i] = device.createBuffer({
-        size: dataArray.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Float32Array(this.buffers[i].getMappedRange()).set(dataArray);
-      this.buffers[i].unmap();
-    }
-  }
-
   getBufferDescription(): GPUVertexBufferLayout {
     // quad buffer layout takes positions 0 - 1
     return {
@@ -120,9 +106,9 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
     }
   }
 
-  render(passEncoder: GPURenderPassEncoder, frame: number) {
+  render(passEncoder: GPURenderPassEncoder, buffer: GPUBuffer, count: number) {
     passEncoder.setPipeline(this.pipeline);
-    passEncoder.setVertexBuffer(1, this.buffers[(frame + 1) % 2]);
-    this.quad.render(passEncoder, this.quadCount);
+    passEncoder.setVertexBuffer(1, buffer);
+    this.quad.render(passEncoder, count);
   }
 }
