@@ -43,8 +43,8 @@ export class Verlet {
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectRadius = 6;
-    this.objectCount = 100;
+    this.objectRadius = 1;
+    this.objectCount = 10000;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR
     this.dataNumFloats = 16;
@@ -55,8 +55,8 @@ export class Verlet {
       const ypos = (Math.random() * bounds) - (bounds / 2);
       this.dataArray[i] = xpos;
       this.dataArray[i+1] = ypos;
-      this.dataArray[i+4] = xpos;
-      this.dataArray[i+5] = ypos;
+      this.dataArray[i+4] = xpos + ((Math.random() - 0.5) * 4);
+      this.dataArray[i+5] = ypos + ((Math.random() - 0.5) * 4);
   
       const rgb = HSVtoRGB(0, lerp(0.6, 0.9, Math.random()), 1);
   

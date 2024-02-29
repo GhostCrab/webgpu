@@ -209,6 +209,8 @@ export default class Renderer {
       const now = performance.now();
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
       const totalTime = now / 1000;
+
+      console.log(deltaTime);
       this.renderStats.updateFPS(deltaTime, this.overlayElement);
 
       // ⏭ Acquire next image from context
@@ -221,17 +223,20 @@ export default class Renderer {
       //   clickPointY = (input.analog.clickY * devicePixelRatio) - (canvas.height / 2);
       // }
 
-      let commandEncoder = this.device.createCommandEncoder();
+      
       this.updateSimParams(totalTime, deltaTime, clickPointX, clickPointY);
 
-      const stepCount = 3;
+      const stepCount = 1;
       for (let i = 0; i < stepCount; i++) {
+        let commandEncoder = this.device.createCommandEncoder();
         let computePassEncoder = commandEncoder.beginComputePass();
         computePassEncoder.setBindGroup(0, this.uniformBindGroup);
         this.verlet.compute(computePassEncoder);
         computePassEncoder.end();
+        this.queue.submit([commandEncoder.finish()]);
       }
       
+      let commandEncoder = this.device.createCommandEncoder();
       let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
       passEncoder.setBindGroup(0, this.uniformBindGroup);
       passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);

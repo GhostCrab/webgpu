@@ -84,7 +84,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   // var accel = verletObjects[index].accel.xy;
 
   // accelerate
-  accel = vec2(0, 0);
+  // accel = vec2(0, 270.0);
+  var accel = vec2<f32>(0);
 
   // accelerate
   if (params.clickPoint.x != 0 && params.clickPoint.y != 0) {
@@ -95,7 +96,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     var posDiffNorm = posDiff / mag;
     accel += posDiffNorm * 3000;
   } else {
-    accel += vec2(0, 270.0);
+    accel += vec2(0, 0.0);
   }
 
   // collide
@@ -152,7 +153,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
         var n = v / dist;
 
         var massRatio = 0.5;
-        var responseCoef = 0.65;
+        var responseCoef = 2.0;
         var delta = 0.5 * responseCoef * (dist - minDist);
         offset += n * (massRatio * delta);
       }
@@ -166,12 +167,14 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     var v = constrainPos - pos;
     var dist = length(v);
     if (dist > constrainRadius - radius) {
+      var constrainVec = normalize(vec2f(-pos.xy));
       var n = v / dist;
       pos = constrainPos - (n * (constrainRadius - radius));
 
       var prevVec = prevPos - pos;
-      prevVec *= 0.999;
-      prevPos = pos + prevVec;
+      prevVec *= 1;
+      // prevPos = pos + prevVec;
+      prevPos = (pos - constrainVec * 2);
     }
   }
 
@@ -179,7 +182,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   {
     var velocity = pos - prevPos;
     prevPos = pos;
-    pos = pos + velocity + (accel * (params.deltaTime * params.deltaTime));
+    pos = pos + velocity + (accel * (params.deltaTime / 100000));
   }
 
   // load back
