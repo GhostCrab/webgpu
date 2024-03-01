@@ -1,42 +1,3 @@
-struct Params {
-  totalTime: f32,
-  deltaTime: f32,
-  constrainRadius: f32,
-  boxDim: f32,
-  constrainCenter: vec4<f32>,
-  clickPoint: vec4<f32>,
-};
-
-struct VerletObject {
-  pos: vec4<f32>,
-  prevPos: vec4<f32>,
-  accel: vec4<f32>,
-  colorAndRadius: vec4<f32>,
-}
-
-struct BinParams {
-  size: i32,
-  x: i32,
-  y: i32,
-  count: i32,
-}
-
-struct BinInfoIn {
-  bin: array<i32, 20>,
-  binSum: array<u32, 16384>,
-  binPrefixSum: array<i32, 16384>,
-  binIndexTracker: array<i32, 16384>,
-  binReindex: array<u32, 20>,
-}
-
-struct BinInfoOut {
-  bin: array<i32, 20>,
-  binSum: array<atomic<u32>, 16384>,
-  binPrefixSum: array<i32, 16384>,
-  binIndexTracker: array<atomic<i32>, 16384>,
-  binReindex: array<u32, 20>,
-}
-
 @group(0) @binding(1) var<uniform> params: Params;
 
 @group(1) @binding(0) var<uniform> binParams: BinParams;
@@ -57,7 +18,14 @@ fn twoToOne(index: vec2<i32> , gridWidth: i32) -> i32 {
   return (row * gridWidth) + col;
 }
 
-@compute @workgroup_size(64)
+fn hash11(p: f32) -> f32 {
+  var next = fract(p * .1031);
+  next *= next + 33.33;
+  next *= next + next;
+  return fract(next);
+}
+
+@compute @workgroup_size(16)
 fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var index = u32(GlobalInvocationID.x);
 
@@ -73,11 +41,17 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var useBins = false;
   var useCollide = true;
 
-  var constrainPos = params.constrainCenter.xy;
+  var constrainCenter = params.constrainCenter.xy;
   var constrainRadius = params.constrainRadius;
 
   var pos = verletObjects[index].pos.xy;
   var prevPos = verletObjects[index].prevPos.xy;
+
+  // sometimes accelerate a particle to add FUN
+  if (hash11((params.totalTime * f32(index))) > 0.9999) {
+    var velocityDir = normalize(pos - prevPos);
+    prevPos = pos - (velocityDir * 5.0);
+  }
 
   var radius = verletObjects[index].colorAndRadius.w;
 
@@ -85,7 +59,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
   // accelerate
   // accel = vec2(0, 270.0);
-  var accel = vec2<f32>(0);
+  var accel = vec2<f32>(0, 50.0);
 
   // accelerate
   if (params.clickPoint.x != 0 && params.clickPoint.y != 0) {
@@ -94,9 +68,9 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     var mag = length(posDiff);
     var invMag2 = 1 / (mag * mag);
     var posDiffNorm = posDiff / mag;
-    accel += posDiffNorm * 3000;
+    accel = posDiffNorm * 300;
   } else {
-    accel += vec2(0, 0.0);
+    accel += vec2<f32>(0, 0.0);
   }
 
   // collide
@@ -164,17 +138,30 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   
   // constrain
   {
-    var v = constrainPos - pos;
+    var v = constrainCenter - pos;
     var dist = length(v);
     if (dist > constrainRadius - radius) {
-      var constrainVec = normalize(vec2f(-pos.xy));
       var n = v / dist;
-      pos = constrainPos - (n * (constrainRadius - radius));
+      var constrainPos = constrainCenter - (n * (constrainRadius - radius));
 
       var prevVec = prevPos - pos;
-      prevVec *= 1;
-      // prevPos = pos + prevVec;
-      prevPos = (pos - constrainVec * 2);
+      var prevVecLen = length(prevVec);
+
+      var constrainVec = prevPos - constrainPos;
+      var constrainVecLen = length(constrainVec);
+
+      // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
+      var bounceVecLen = constrainVecLen - prevVecLen;
+
+      var reflectNormal = normalize(vec2f(-pos.xy));
+      var oldVelo = pos - prevPos;
+
+
+      // calculate the reflect vector
+      var newVelo = reflect(oldVelo, reflectNormal);
+      pos = constrainPos + (newVelo * bounceVecLen);
+      prevPos = pos - (newVelo);
+      
     }
   }
 
@@ -182,7 +169,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   {
     var velocity = pos - prevPos;
     prevPos = pos;
-    pos = pos + velocity + (accel * (params.deltaTime / 100000));
+    pos = pos + velocity + (accel * (params.deltaTime * params.deltaTime));
   }
 
   // load back

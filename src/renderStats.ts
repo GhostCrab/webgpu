@@ -8,8 +8,8 @@ export default class RenderStats {
       this.frameTimes.shift();
 
     const ema = this.ema6();
-    // overlayElement.innerText = `${Math.round((1/ema.pop()) * 100) / 100}`;
-    overlayElement.innerText = `${Math.round(1/ema.pop())}`;
+    overlayElement.innerText = `${Math.round((1/ema.pop()) * 100) / 100}`;
+    // overlayElement.innerText = `${Math.round(1/ema.pop())}`;
   }
 
   private exponentialAverage(values: number[], lambda: number): number[] {

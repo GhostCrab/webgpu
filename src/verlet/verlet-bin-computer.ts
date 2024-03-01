@@ -1,11 +1,11 @@
 import { computeShaderHeader } from './verlet-computer-shader-header';
-import shaderCode from './verlet-computer.wgsl';
+import shaderCode from './verlet-bin-computer.wgsl';
 
-export class VerletComputer {
+export class VerletBinComputer {
   uniformBindGroupLayout: GPUBindGroupLayout;
   storageBindGroupLayout: GPUBindGroupLayout;
   pipelineLayout: GPUPipelineLayout;
-  
+
   mainPipeline: GPUComputePipeline;
   binSumPipeline: GPUComputePipeline;
   binPrefixSumPipeline: GPUComputePipeline;
@@ -19,26 +19,36 @@ export class VerletComputer {
   objectCount: number;
 
   binParams: Uint32Array;
-  
+
   binParamsBufferSize: number;
   binParamsBuffer: GPUBuffer;
 
+  binData: Int32Array
   binBufferSize: number;
   binBufferOffset: number;
+
+  binSumData: Uint32Array;
   binSumBufferSize: number;
   binSumBufferOffset: number;
+
+  binPrefixSumData: Int32Array;
   binPrefixSumBufferSize: number;
   binPrefixSumBufferOffset: number;
+
+  binIndexTrackerData: Int32Array;
   binIndexTrackerBufferSize: number;
   binIndexTrackerBufferOffset: number;
+
+  binReindexData: Uint32Array;
   binReindexBufferSize: number;
   binReindexBufferOffset: number;
-  
+
   binInfoBufferSize: number;
   binInfoBuffers: GPUBuffer[];
 
   binReadBuffer: GPUBuffer;
-  
+  binInfoWriteBuffer: GPUBuffer;
+
   uniformBindGroup: GPUBindGroup;
   storageBindGroup: GPUBindGroup;
 
@@ -63,7 +73,7 @@ export class VerletComputer {
       }, {
         binding: 1, // binIn
         visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'storage' },
+        buffer: { type: 'read-only-storage' },
       }, {
         binding: 2, // binOut
         visibility: GPUShaderStage.COMPUTE,
@@ -78,7 +88,7 @@ export class VerletComputer {
         this.storageBindGroupLayout,  // @group(2)
       ]
     });
-  
+
     this.mainPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
@@ -86,7 +96,7 @@ export class VerletComputer {
         entryPoint: 'main',
       },
     });
-  
+
     this.binSumPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
@@ -94,7 +104,7 @@ export class VerletComputer {
         entryPoint: 'binSum',
       },
     });
-  
+
     this.binPrefixSumPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
@@ -102,7 +112,7 @@ export class VerletComputer {
         entryPoint: 'binPrefixSum',
       },
     });
-  
+
     this.binReindexPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
@@ -110,11 +120,16 @@ export class VerletComputer {
         entryPoint: 'binReindex',
       },
     });
-  
+
     this.passDescriptor = {};
   }
 
-  initBuffers(device: GPUDevice, bounds: number, objectCount: number, voBuffer: GPUBuffer) {
+  initBuffers(device: GPUDevice,
+              bounds: number,
+              objectCount: number,
+              voDataArray: Float32Array,
+              voDataArrayStride: number,
+              voBuffer: GPUBuffer) {
     this.objectCount = objectCount;
     const gridPixelDim = bounds;
     const binParamsArrayLength = 4;
@@ -142,37 +157,69 @@ export class VerletComputer {
     new Uint32Array(this.binParamsBuffer.getMappedRange()).set(this.binParams);
     this.binParamsBuffer.unmap();
 
-    this.binBufferSize = Int32Array.BYTES_PER_ELEMENT * objectCount;
+    // binData: Int32Array
+    this.binData = new Int32Array(objectCount);
+    this.binBufferSize = this.binData.byteLength;
     this.binBufferOffset = 0;
-    
-    this.binSumBufferSize = Uint32Array.BYTES_PER_ELEMENT * binGridSquareCount;
+
+    // binSumData: Uint32Array;
+    this.binSumData = new Uint32Array(binGridSquareCount);
+    this.binSumBufferSize = this.binSumData.byteLength;
     this.binSumBufferOffset = this.binBufferOffset + this.binBufferSize;
-    
-    this.binPrefixSumBufferSize = Int32Array.BYTES_PER_ELEMENT * binGridSquareCount;
+
+    // binPrefixSumData: Int32Array;
+    this.binPrefixSumData = new Int32Array(binGridSquareCount);
+    this.binPrefixSumBufferSize = this.binPrefixSumData.byteLength;
     this.binPrefixSumBufferOffset = this.binSumBufferOffset + this.binSumBufferSize;
-    
-    this.binIndexTrackerBufferSize = Int32Array.BYTES_PER_ELEMENT * binGridSquareCount;
+
+    // binIndexTrackerData: Int32Array;
+    this.binIndexTrackerData = new Int32Array(binGridSquareCount);
+    this.binIndexTrackerBufferSize = this.binIndexTrackerData.byteLength;
     this.binIndexTrackerBufferOffset = this.binPrefixSumBufferOffset + this.binPrefixSumBufferSize;
-    
-    this.binReindexBufferSize = Uint32Array.BYTES_PER_ELEMENT * objectCount;
+
+    // binReindexData: Uint32Array;
+    this.binReindexData = new Uint32Array(objectCount);
+    this.binReindexBufferSize = this.binReindexData.byteLength;
     this.binReindexBufferOffset = this.binIndexTrackerBufferOffset + this.binIndexTrackerBufferSize;
-    
+
+    // populate this.binData with initial vo positions
+    for (let i = 0; i < objectCount; i++) {
+      const xpos = voDataArray[(i * voDataArrayStride)];
+      const ypos = voDataArray[(i * voDataArrayStride) + 1];
+
+      const binx = Math.floor((xpos + (bounds / 2)) / binSquareSize);
+      const biny = Math.floor((ypos + (bounds / 2)) / binSquareSize);
+
+      this.binData[i] = (biny * binGridWidth) + binx;
+    }
+
     this.binInfoBufferSize = this.binReindexBufferOffset + this.binReindexBufferSize;
     this.binInfoBuffers = new Array(2);
     this.binInfoBuffers[0] = device.createBuffer({
       size: this.binInfoBufferSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true
     });
+    new Float32Array(this.binInfoBuffers[0].getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
+    this.binInfoBuffers[0].unmap();
 
     this.binInfoBuffers[1] = device.createBuffer({
       size: this.binInfoBufferSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      mappedAtCreation: true
     });
+    new Float32Array(this.binInfoBuffers[1].getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
+    this.binInfoBuffers[1].unmap();
 
     this.binReadBuffer = device.createBuffer({
       size: this.binBufferSize,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-    })
+    });
+
+    this.binInfoWriteBuffer = device.createBuffer({
+      size: this.binInfoBufferSize,
+      usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE
+    });
 
     this.uniformBindGroup = device.createBindGroup({
       layout: this.mainPipeline.getBindGroupLayout(1),
@@ -211,13 +258,72 @@ export class VerletComputer {
     });
   }
 
-  compute(passEncoder: GPUComputePassEncoder) {
-    const workgroupCount = Math.ceil(this.objectCount / 16);
+  async compute(device: GPUDevice, globalUniformBindGroup: GPUBindGroup): Promise<GPUCommandBuffer[]> {
+    // copy data from this.binInfoBuffers[1] to the read buffer
+    let commandEncoder = device.createCommandEncoder();
+    commandEncoder.copyBufferToBuffer(this.binInfoBuffers[1], 0, this.binReadBuffer, 0, this.binBufferSize);
 
+    // copy data from read buffer to cpu arrays
+    await this.binReadBuffer.mapAsync(GPUMapMode.READ, 0, this.binBufferSize);
+    this.binData = new Int32Array(this.binReadBuffer.getMappedRange(0, this.binBufferSize).slice(0));
+    this.binReadBuffer.unmap();
+
+    // START BINNING
+    // clear binSum
+    this.binSumData.forEach((bs, index) => {this.binSumData[index] = 0;});
+
+    // increment binSum cell for each object in that cell
+    this.binData.forEach((b, index) => {this.binSumData[b]++;});
+
+    // fill out prefix sum cell with accumulated object count for each cell
+    let prefixSum = 0;
+    this.binPrefixSumData.forEach((ps, index) => {
+      prefixSum += this.binSumData[index];
+      this.binPrefixSumData[index] = prefixSum;
+    });
+
+    this.binIndexTrackerData.forEach((bit, index) => {
+      if (index > 0) {
+        this.binIndexTrackerData[index] = this.binPrefixSumData[index - 1];  
+      } else {
+        this.binIndexTrackerData[index] = 0;
+      }
+    });
+
+    this.binData.forEach((b, index) => {
+      const lastIndex = this.binIndexTrackerData[b];
+      this.binIndexTrackerData[b]++;
+      this.binReindexData[lastIndex] = index;
+    });
+    // END BINNING
+
+    console.log(this.binData);
+
+    // copy data back to this.binInfoBuffers[0]
+    await this.binInfoWriteBuffer.mapAsync(GPUMapMode.WRITE, 0, this.binInfoBufferSize);
+    
+    new Int32Array(this.binInfoWriteBuffer.getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
+    new Uint32Array(this.binInfoWriteBuffer.getMappedRange(this.binSumBufferOffset, this.binSumBufferSize)).set(this.binSumData);
+    new Int32Array(this.binInfoWriteBuffer.getMappedRange(this.binPrefixSumBufferOffset, this.binPrefixSumBufferSize)).set(this.binPrefixSumData);
+    new Int32Array(this.binInfoWriteBuffer.getMappedRange(this.binIndexTrackerBufferOffset, this.binIndexTrackerBufferSize)).set(this.binIndexTrackerData);
+    new Uint32Array(this.binInfoWriteBuffer.getMappedRange(this.binReindexBufferOffset, this.binReindexBufferSize)).set(this.binReindexData);
+    this.binInfoWriteBuffer.unmap();
+
+    commandEncoder.copyBufferToBuffer(this.binInfoWriteBuffer, 0, this.binInfoBuffers[0], 0, this.binInfoBufferSize);
+    
+    const workgroupCount = Math.ceil(this.objectCount / 64);
+    
+    // let commandEncoder = device.createCommandEncoder();
+    let passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setBindGroup(0, globalUniformBindGroup);
     passEncoder.setBindGroup(1, this.uniformBindGroup);
     passEncoder.setBindGroup(2, this.storageBindGroup);
-        
+
     passEncoder.setPipeline(this.mainPipeline);
     passEncoder.dispatchWorkgroups(workgroupCount);
+
+    passEncoder.end();
+    
+    return [commandEncoder.finish()];
   }
 }

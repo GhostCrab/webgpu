@@ -1,3 +1,4 @@
+import { VerletBinComputer } from "./verlet-bin-computer";
 import { VerletComputer } from "./verlet-computer";
 import { VerletRenderer } from "./verlet-renderer";
 
@@ -35,7 +36,8 @@ export class Verlet {
   dataArray: Float32Array;
 
   renderer: VerletRenderer;
-  computer: VerletComputer;
+  // computer: VerletComputer;
+  computer: VerletBinComputer;
 
   bounds: number;
   buffer: GPUBuffer;
@@ -43,8 +45,8 @@ export class Verlet {
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectRadius = 1;
-    this.objectCount = 10000;
+    this.objectRadius = 3;
+    this.objectCount = 100;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR
     this.dataNumFloats = 16;
@@ -58,7 +60,7 @@ export class Verlet {
       this.dataArray[i+4] = xpos + ((Math.random() - 0.5) * 4);
       this.dataArray[i+5] = ypos + ((Math.random() - 0.5) * 4);
   
-      const rgb = HSVtoRGB(0, lerp(0.6, 0.9, Math.random()), 1);
+      const rgb = HSVtoRGB(0, lerp(0.2, 0.9, Math.random()), 1);
   
       this.dataArray[i+12] = rgb.r;
       this.dataArray[i+13] = rgb.g;
@@ -69,7 +71,8 @@ export class Verlet {
     }
 
     this.renderer = new VerletRenderer(globalUniformBindGroupLayout, device);
-    this.computer = new VerletComputer(globalUniformBindGroupLayout, device);
+    // this.computer = new VerletComputer(globalUniformBindGroupLayout, device, this.objectCount);
+    this.computer = new VerletBinComputer(globalUniformBindGroupLayout, device, this.objectCount);
 
     this.initBuffers(device);
   }
@@ -83,14 +86,15 @@ export class Verlet {
     new Float32Array(this.buffer.getMappedRange()).set(this.dataArray);
     this.buffer.unmap();
 
-    this.computer.initBuffers(device, this.bounds, this.objectCount, this.buffer);
+    // this.computer.initBuffers(device, this.bounds, this.objectCount, this.buffer);
+    this.computer.initBuffers(device, this.bounds, this.objectCount, this.dataArray, this.dataNumFloats, this.buffer);
   }
 
   render(passEncoder: GPURenderPassEncoder) {
     this.renderer.render(passEncoder, this.buffer, this.objectCount);
   }
 
-  compute(passEncoder: GPUComputePassEncoder) {
-    this.computer.compute(passEncoder);
+  async compute(device: GPUDevice, globalUniformBindGroup: GPUBindGroup): Promise<GPUCommandBuffer[]> {
+    return this.computer.compute(device, globalUniformBindGroup);
   }
 }
