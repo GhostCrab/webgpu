@@ -183,15 +183,21 @@ export class VerletBinComputer {
     this.binReindexBufferOffset = this.binIndexTrackerBufferOffset + this.binIndexTrackerBufferSize;
 
     // populate this.binData with initial vo positions
+    const tmpOut: number[] = [];
     for (let i = 0; i < objectCount; i++) {
       const xpos = voDataArray[(i * voDataArrayStride)];
       const ypos = voDataArray[(i * voDataArrayStride) + 1];
 
+      
       const binx = Math.floor((xpos + (bounds / 2)) / binSquareSize);
       const biny = Math.floor((ypos + (bounds / 2)) / binSquareSize);
-
+      
       this.binData[i] = (biny * binGridWidth) + binx;
+      tmpOut.push(xpos);
     }
+
+    console.log(this.binData);
+    console.log(`${bounds} ${binSquareSize} ${binGridWidth}`);
 
     this.binInfoBufferSize = this.binReindexBufferOffset + this.binReindexBufferSize;
     this.binInfoBuffers = new Array(2);
@@ -268,6 +274,8 @@ export class VerletBinComputer {
     this.binData = new Int32Array(this.binReadBuffer.getMappedRange(0, this.binBufferSize).slice(0));
     this.binReadBuffer.unmap();
 
+    console.log(this.binData);
+
     // START BINNING
     // clear binSum
     this.binSumData.forEach((bs, index) => {this.binSumData[index] = 0;});
@@ -296,8 +304,6 @@ export class VerletBinComputer {
       this.binReindexData[lastIndex] = index;
     });
     // END BINNING
-
-    console.log(this.binData);
 
     // copy data back to this.binInfoBuffers[0]
     await this.binInfoWriteBuffer.mapAsync(GPUMapMode.WRITE, 0, this.binInfoBufferSize);

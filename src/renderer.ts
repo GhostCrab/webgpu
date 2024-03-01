@@ -145,7 +145,7 @@ export default class Renderer {
     simParams[0] = 0; // deltaTime
     simParams[1] = 0; // totalTime
     simParams[2] = this.canvas.height / 2 - 20; // constrainRadius
-    simParams[3] = 0; // boxDim
+    simParams[3] = this.canvas.height; // boxDim
     simParams[4] = 0; // constrainCenter.x
     simParams[5] = 0; // constrainCenter.y
     simParams[6] = 0; // constrainCenter.z
