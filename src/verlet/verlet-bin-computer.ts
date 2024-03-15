@@ -1,5 +1,8 @@
 import { computeShaderHeader } from './verlet-computer-shader-header';
 import shaderCode from './verlet-bin-computer.wgsl';
+import { Verlet } from './verlet';
+
+import { vec2 } from 'wgpu-matrix';
 
 export class VerletBinComputer {
   uniformBindGroupLayout: GPUBindGroupLayout;
@@ -47,7 +50,6 @@ export class VerletBinComputer {
   binInfoBuffers: GPUBuffer[];
 
   binReadBuffer: GPUBuffer;
-  binInfoWriteBuffer: GPUBuffer;
 
   uniformBindGroup: GPUBindGroup;
   storageBindGroup: GPUBindGroup;
@@ -137,10 +139,18 @@ export class VerletBinComputer {
     // const binGridWidth = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     // const binGridHeight = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
-    const binGridWidth = 128;
-    const binGridHeight = 128;
-    const binSquareSize = Math.ceil(gridPixelDim / 128);
-    const binGridSquareCount = 16384; // 128*128
+
+    // const binGridWidth = 128;
+    // const binGridHeight = 128;
+    // const binSquareSize = Math.ceil(gridPixelDim / 128);
+    // const binGridSquareCount = 16384; // 128*128
+
+    const binResolution = 128;
+    const binGridWidth = binResolution;
+    const binGridHeight = binResolution;
+    const binSquareSize = Math.ceil(gridPixelDim / binResolution);
+    const binGridSquareCount = binResolution * binResolution;
+
     this.binParams = new Uint32Array([
       binSquareSize,     // bin square size
       binGridWidth,      // grid width
@@ -183,7 +193,6 @@ export class VerletBinComputer {
     this.binReindexBufferOffset = this.binIndexTrackerBufferOffset + this.binIndexTrackerBufferSize;
 
     // populate this.binData with initial vo positions
-    const tmpOut: number[] = [];
     for (let i = 0; i < objectCount; i++) {
       const xpos = voDataArray[(i * voDataArrayStride)];
       const ypos = voDataArray[(i * voDataArrayStride) + 1];
@@ -193,11 +202,10 @@ export class VerletBinComputer {
       const biny = Math.floor((ypos + (bounds / 2)) / binSquareSize);
       
       this.binData[i] = (biny * binGridWidth) + binx;
-      tmpOut.push(xpos);
     }
 
-    console.log(this.binData);
-    console.log(`${bounds} ${binSquareSize} ${binGridWidth}`);
+    // console.log(this.binData);
+    // console.log(`${bounds} ${binSquareSize} ${binGridWidth}`);
 
     this.binInfoBufferSize = this.binReindexBufferOffset + this.binReindexBufferSize;
     this.binInfoBuffers = new Array(2);
@@ -220,11 +228,6 @@ export class VerletBinComputer {
     this.binReadBuffer = device.createBuffer({
       size: this.binBufferSize,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-    });
-
-    this.binInfoWriteBuffer = device.createBuffer({
-      size: this.binInfoBufferSize,
-      usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE
     });
 
     this.uniformBindGroup = device.createBindGroup({
@@ -264,17 +267,8 @@ export class VerletBinComputer {
     });
   }
 
-  async compute(device: GPUDevice, globalUniformBindGroup: GPUBindGroup): Promise<GPUCommandBuffer[]> {
-    // copy data from this.binInfoBuffers[1] to the read buffer
-    let commandEncoder = device.createCommandEncoder();
-    commandEncoder.copyBufferToBuffer(this.binInfoBuffers[1], 0, this.binReadBuffer, 0, this.binBufferSize);
-
-    // copy data from read buffer to cpu arrays
-    await this.binReadBuffer.mapAsync(GPUMapMode.READ, 0, this.binBufferSize);
-    this.binData = new Int32Array(this.binReadBuffer.getMappedRange(0, this.binBufferSize).slice(0));
-    this.binReadBuffer.unmap();
-
-    console.log(this.binData);
+  doBinning() {
+    // console.log(this.binData);
 
     // START BINNING
     // clear binSum
@@ -304,18 +298,26 @@ export class VerletBinComputer {
       this.binReindexData[lastIndex] = index;
     });
     // END BINNING
+  }
+
+  async compute(device: GPUDevice, globalUniformBindGroup: GPUBindGroup): Promise<GPUCommandBuffer[]> {
+    // copy data from this.binInfoBuffers[1] to the read buffer
+    let commandEncoder = device.createCommandEncoder();
+    commandEncoder.copyBufferToBuffer(this.binInfoBuffers[1], 0, this.binReadBuffer, 0, this.binBufferSize);
+
+    // copy data from read buffer to cpu arrays
+    await this.binReadBuffer.mapAsync(GPUMapMode.READ, 0, this.binBufferSize);
+    this.binData = new Int32Array(this.binReadBuffer.getMappedRange(0, this.binBufferSize).slice(0));
+    this.binReadBuffer.unmap();
+
+    this.doBinning();
 
     // copy data back to this.binInfoBuffers[0]
-    await this.binInfoWriteBuffer.mapAsync(GPUMapMode.WRITE, 0, this.binInfoBufferSize);
-    
-    new Int32Array(this.binInfoWriteBuffer.getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
-    new Uint32Array(this.binInfoWriteBuffer.getMappedRange(this.binSumBufferOffset, this.binSumBufferSize)).set(this.binSumData);
-    new Int32Array(this.binInfoWriteBuffer.getMappedRange(this.binPrefixSumBufferOffset, this.binPrefixSumBufferSize)).set(this.binPrefixSumData);
-    new Int32Array(this.binInfoWriteBuffer.getMappedRange(this.binIndexTrackerBufferOffset, this.binIndexTrackerBufferSize)).set(this.binIndexTrackerData);
-    new Uint32Array(this.binInfoWriteBuffer.getMappedRange(this.binReindexBufferOffset, this.binReindexBufferSize)).set(this.binReindexData);
-    this.binInfoWriteBuffer.unmap();
-
-    commandEncoder.copyBufferToBuffer(this.binInfoWriteBuffer, 0, this.binInfoBuffers[0], 0, this.binInfoBufferSize);
+    device.queue.writeBuffer(this.binInfoBuffers[0], this.binBufferOffset, this.binData);
+    device.queue.writeBuffer(this.binInfoBuffers[0], this.binSumBufferOffset, this.binSumData);
+    device.queue.writeBuffer(this.binInfoBuffers[0], this.binPrefixSumBufferOffset, this.binPrefixSumData);
+    device.queue.writeBuffer(this.binInfoBuffers[0], this.binIndexTrackerBufferOffset, this.binIndexTrackerData);
+    device.queue.writeBuffer(this.binInfoBuffers[0], this.binReindexBufferOffset, this.binReindexData);
     
     const workgroupCount = Math.ceil(this.objectCount / 64);
     
@@ -331,5 +333,209 @@ export class VerletBinComputer {
     passEncoder.end();
     
     return [commandEncoder.finish()];
+  }
+
+  twoToOne(posx: number, posy: number, gridWidth: number) {
+    const row = posy;
+    const col = posx;
+    return (row * gridWidth) + col;
+  }
+
+  computeCPU(verletObjs: Verlet, simParams: Float32Array) {
+    // populate binData with updated data from verlet objects
+    for (let index = 0; index < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
+      const posx = verletObjs.dataArray[index];
+      const posy = verletObjs.dataArray[index+1];
+
+      // var binx = i32((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
+      const binx = Math.floor((posx + (simParams[3] / 2)) / this.binParams[0]);
+      // var biny = i32((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
+      const biny = Math.floor((posy + (simParams[3] / 2)) / this.binParams[0]);
+      // binOut.bin[index] = binIndex;
+      this.binData[Math.floor(index / verletObjs.dataNumFloats)] = (biny * this.binParams[1]) + binx;
+
+      index += verletObjs.dataNumFloats;
+    }
+
+    this.doBinning();
+
+    const constrainCenter = vec2.create(simParams[4], simParams[5]);
+    const constrainRadius = simParams[2];
+
+    const dt = simParams[1];
+
+    // apply gravity
+    for (let index = 0; index < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
+      verletObjs.dataArray[index + 9] = 450;
+
+      index += verletObjs.dataNumFloats;
+    }
+
+    // for each bin, collide objects in bin with other objects in the same and neighboring bin
+    for (let binIndex = 0; binIndex < this.binParams[3]; binIndex++) {
+      const neighborIndexes = [
+        binIndex - this.binParams[1] - 1, binIndex - this.binParams[1], binIndex - this.binParams[1] + 1,
+        binIndex                     - 1, binIndex,                     binIndex                     + 1,
+        binIndex + this.binParams[1] - 1, binIndex + this.binParams[1], binIndex + this.binParams[1] + 1
+      ];
+
+      let startSelfIndex = this.binPrefixSumData[binIndex - 1];
+      if (binIndex === 0)
+        startSelfIndex = 0;
+      for (let i = startSelfIndex; i < this.binPrefixSumData[binIndex]; i++) {
+        const index = this.binReindexData[i];
+    
+        let pos = vec2.create(
+          verletObjs.dataArray[(index * verletObjs.dataNumFloats)],
+          verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 1]);
+        const radius = verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 15];
+
+        for (let neighborIndexIndex = 0; neighborIndexIndex < 9; neighborIndexIndex++) {
+          let neighborIndex = neighborIndexes[neighborIndexIndex];
+          if (neighborIndex < 0 || neighborIndex >= this.binParams[3]) {
+            continue;
+          }
+
+          let startOtherIndex = this.binPrefixSumData[neighborIndex - 1];
+          if (neighborIndex === 0)
+            startOtherIndex = 0;
+    
+          for (var j = startOtherIndex; j < this.binPrefixSumData[neighborIndex]; j++) {
+            const otherIndex = this.binReindexData[j];
+            const otherRadius = verletObjs.dataArray[(otherIndex * verletObjs.dataNumFloats) + 15];
+            if (otherIndex != index && otherRadius !== 0) {
+              let otherPos = vec2.create(
+                verletObjs.dataArray[(otherIndex * verletObjs.dataNumFloats)],
+                verletObjs.dataArray[(otherIndex * verletObjs.dataNumFloats) + 1]);
+                
+              // console.log(`Testing ${index} [${pos[0].toFixed(0)} ${pos[1].toFixed(0)}] <=> ${otherIndex} [${otherPos[0].toFixed(0)} ${otherPos[1].toFixed(0)}]`);
+              
+              var v = vec2.sub(pos, otherPos);
+              var dist2 = vec2.lenSq(v);
+              var minDist = radius + otherRadius;
+              if (dist2 < minDist * minDist) {
+                // console.log("collide");
+                var dist = Math.sqrt(dist2);
+                var n = vec2.scale(v, 1 / dist);
+      
+                var massRatio = 0.5;
+                var responseCoef = 0.65;
+                var delta = 0.5 * responseCoef * (dist - minDist);
+                vec2.addScaled(pos, n, -massRatio * delta, pos);
+              }
+            }
+          } 
+        }
+
+        // write back data
+        verletObjs.dataArray[(index * verletObjs.dataNumFloats)] = pos[0];
+        verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 1] = pos[1];
+      }
+    }
+
+
+    for (let index = 0; index < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
+      index += verletObjs.dataNumFloats;
+      continue;
+      let pos = vec2.create(verletObjs.dataArray[index], verletObjs.dataArray[index + 1]);
+      const radius = verletObjs.dataArray[index + 15];
+      
+      for (let otherIndex = index + verletObjs.dataNumFloats; otherIndex < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
+        let otherPos = vec2.create(verletObjs.dataArray[otherIndex], verletObjs.dataArray[otherIndex + 1]);
+        const otherRadius = verletObjs.dataArray[otherIndex + 15];
+
+        var v = vec2.sub(pos, otherPos);
+        var dist2 = vec2.lenSq(v);
+        var minDist = radius + otherRadius;
+        if (dist2 < minDist * minDist) {
+          var dist = Math.sqrt(dist2);
+          var n = vec2.scale(v, 1 / dist);
+
+          var massRatio = 0.5;
+          var responseCoef = 0.65;
+          var delta = 0.5 * responseCoef * (dist - minDist);
+          vec2.addScaled(pos, n, -massRatio * delta, pos);
+          vec2.addScaled(otherPos, n, massRatio * delta, otherPos);
+
+          verletObjs.dataArray[otherIndex] = otherPos[0];
+          verletObjs.dataArray[otherIndex + 1] = otherPos[1];
+        }
+        
+        otherIndex += verletObjs.dataNumFloats;
+      }
+
+      // write back data
+      verletObjs.dataArray[index] = pos[0];
+      verletObjs.dataArray[index + 1] = pos[1];
+
+      index += verletObjs.dataNumFloats;
+    }
+
+    // apply constraints
+    for (let index = 0; index < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
+      let pos = vec2.create(verletObjs.dataArray[index], verletObjs.dataArray[index + 1]);
+      let prevPos = vec2.create(verletObjs.dataArray[index + 4], verletObjs.dataArray[index + 5]);
+      const radius = verletObjs.dataArray[index + 15];
+
+      const v = vec2.sub(constrainCenter, pos);
+      const dist = vec2.len(v);
+      if (dist > constrainRadius - radius) {
+        const n = vec2.scale(v, 1 / dist);
+        const constrainPos = vec2.sub(constrainCenter, vec2.scale(n, constrainRadius - radius));
+
+        const prevVec = vec2.sub(prevPos, pos);
+        const prevVecLen = vec2.len(prevVec);
+
+        const constrainVec = vec2.sub(prevPos, constrainPos);
+        const constrainVecLen = vec2.len(constrainVec);
+
+        // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
+        const bounceVecLen = constrainVecLen - prevVecLen;
+
+        const reflectNormal = vec2.normalize(vec2.negate(pos));
+        const oldVelo = vec2.sub(pos, prevPos);
+
+        // calculate the reflect vector
+        const newVelo = vec2.sub(oldVelo, vec2.scale(reflectNormal, 2 * vec2.dot(reflectNormal, oldVelo)));
+        pos = vec2.addScaled(constrainPos, newVelo, bounceVecLen);
+        prevPos = vec2.addScaled(pos, newVelo, -0.8);
+
+        // write data back
+        verletObjs.dataArray[index] = pos[0];
+        verletObjs.dataArray[index + 1] = pos[1];
+        
+        verletObjs.dataArray[index + 4] = prevPos[0];
+        verletObjs.dataArray[index + 5] = prevPos[1];
+      }
+
+      index += verletObjs.dataNumFloats;
+    }
+
+    // apply verlet integration
+    for (let index = 0; index < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
+      let pos = vec2.create(verletObjs.dataArray[index], verletObjs.dataArray[index + 1]);
+      let prevPos = vec2.create(verletObjs.dataArray[index + 4], verletObjs.dataArray[index + 5]);
+      let accel = vec2.create(verletObjs.dataArray[index + 8], verletObjs.dataArray[index + 9]);
+
+      const velocity = vec2.subtract(pos, prevPos);
+      const offset = vec2.addScaled(velocity, accel, dt * dt);
+
+      // write back data
+      // pos
+      verletObjs.dataArray[index] = pos[0] + offset[0];
+      verletObjs.dataArray[index + 1] = pos[1] + offset[1];
+      
+      // prevpos = pos
+      verletObjs.dataArray[index + 4] = pos[0];
+      verletObjs.dataArray[index + 5] = pos[1];
+
+      // zero out acceleration
+      verletObjs.dataArray[index + 8]  = 0;
+      verletObjs.dataArray[index + 9]  = 0;
+      verletObjs.dataArray[index + 10] = 0;
+      verletObjs.dataArray[index + 11] = 0;
+
+      index += verletObjs.dataNumFloats;
+    }
   }
 }

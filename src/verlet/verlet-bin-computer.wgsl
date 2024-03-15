@@ -50,101 +50,99 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     var pos = verletObjects[index].pos.xy;
     var prevPos = verletObjects[index].prevPos.xy;
 
-    // // sometimes accelerate a particle to add FUN
-    // if (hash11((params.totalTime * f32(index))) > 0.9999) {
-    //   var velocityDir = normalize(pos - prevPos);
-    //   prevPos = pos - (velocityDir * 5.0);
-    // }
+    // sometimes accelerate a particle to add FUN
+    if (hash11((params.totalTime * f32(index))) > 0.9999) {
+      var velocityDir = normalize(pos - prevPos);
+      prevPos = pos - (velocityDir * 5.0);
+    }
 
-    // var radius = verletObjects[index].colorAndRadius.w;
+    var radius = verletObjects[index].colorAndRadius.w;
 
-    // // var accel = verletObjects[index].accel.xy;
-    // var accel = vec2<f32>(0, 50.0);
+    // var accel = verletObjects[index].accel.xy;
+    var accel = vec2<f32>(0, 500.0);
 
-    // // accelerate
-    // if (params.clickPoint.x != 0 && params.clickPoint.y != 0) {
-    //   var _pos = params.clickPoint.xy;
-    //   var posDiff = _pos - pos;
-    //   var mag = length(posDiff);
-    //   var invMag2 = 1 / (mag * mag);
-    //   var posDiffNorm = posDiff / mag;
-    //   accel = posDiffNorm * 300;
-    // } else {
-    //   accel += vec2<f32>(0, 0.0);
-    // }
+    // accelerate
+    if (params.clickPoint.x != 0 && params.clickPoint.y != 0) {
+      var _pos = params.clickPoint.xy;
+      var posDiff = _pos - pos;
+      var mag = length(posDiff);
+      var invMag2 = 1 / (mag * mag);
+      var posDiffNorm = posDiff / mag;
+      accel = posDiffNorm * 300;
+    } else {
+      accel += vec2<f32>(0, 0.0);
+    }
 
-    // // collide
-    // var offset = vec2(0.0);
+    // collide
+    var offset = vec2(0.0);
 
-    // for (var neighborIndexIndex = 0; neighborIndexIndex < 9; neighborIndexIndex++) {
-    //   var neighborIndex = neighborIndexes[neighborIndexIndex];
-    //   if (neighborIndex < 0 || neighborIndex >= binParams.count) {
-    //     continue;
-    //   }
+    for (var neighborIndexIndex = 0; neighborIndexIndex < 9; neighborIndexIndex++) {
+      var neighborIndex = neighborIndexes[neighborIndexIndex];
+      if (neighborIndex < 0 || neighborIndex >= binParams.count) {
+        continue;
+      }
 
-    //   for (var i = binIn.binPrefixSum[neighborIndex - 1]; i < binIn.binPrefixSum[neighborIndex]; i++) {
-    //     var otherIndex = binIn.binReindex[i];
-    //     if (otherIndex != index && verletObjects[otherIndex].colorAndRadius.w == 0) {
-    //       var _pos = verletObjects[otherIndex].pos.xy;
-    //       var _radius = verletObjects[otherIndex].colorAndRadius.w;
+      for (var i = binIn.binPrefixSum[neighborIndex - 1]; i < binIn.binPrefixSum[neighborIndex]; i++) {
+        var otherIndex = binIn.binReindex[i];
+        if (otherIndex != index && verletObjects[otherIndex].colorAndRadius.w != 0) {
+          var _pos = verletObjects[otherIndex].pos.xy;
+          var _radius = verletObjects[otherIndex].colorAndRadius.w;
 
-    //       var v = pos - _pos;
-    //       var dist2 = (v.x * v.x) + (v.y * v.y);
-    //       var minDist = radius + _radius;
-    //       if (dist2 < minDist * minDist) {
-    //         var dist = sqrt(dist2);
-    //         var n = v / dist;
+          var v = pos - _pos;
+          var dist2 = dot(v, v);
+          var minDist = radius + _radius;
+          if (dist2 < minDist * minDist) {
+            var dist = sqrt(dist2);
+            var n = v / dist;
 
-    //         var massRatio = 0.5;
-    //         var responseCoef = 0.65;
-    //         var delta = 0.5 * responseCoef * (dist - minDist);
-    //         offset += n * (massRatio * delta);
-    //       }
-    //     }
-    //   }
-    // }
+            var massRatio = 0.5;
+            var responseCoef = 0.65;
+            var delta = 0.5 * responseCoef * (dist - minDist);
+            offset += n * (massRatio * delta);
+          }
+        }
+      }
+    }
     
-    // pos -= offset;
+    pos -= offset;
   
-    // // constrain
-    // {
-    //   var v = constrainCenter - pos;
-    //   var dist = length(v);
-    //   if (dist > constrainRadius - radius) {
-    //     var n = v / dist;
-    //     var constrainPos = constrainCenter - (n * (constrainRadius - radius));
+    // constrain
+    {
+      var v = constrainCenter - pos;
+      var dist = length(v);
+      if (dist > constrainRadius - radius) {
+        var n = v / dist;
+        var constrainPos = constrainCenter - (n * (constrainRadius - radius));
 
-    //     var prevVec = prevPos - pos;
-    //     var prevVecLen = length(prevVec);
+        var prevVec = prevPos - pos;
+        var prevVecLen = length(prevVec);
 
-    //     var constrainVec = prevPos - constrainPos;
-    //     var constrainVecLen = length(constrainVec);
+        var constrainVec = prevPos - constrainPos;
+        var constrainVecLen = length(constrainVec);
 
-    //     // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
-    //     var bounceVecLen = constrainVecLen - prevVecLen;
+        // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
+        var bounceVecLen = constrainVecLen - prevVecLen;
 
-    //     var reflectNormal = normalize(vec2f(-pos.xy));
-    //     var oldVelo = pos - prevPos;
+        var reflectNormal = normalize(vec2f(-pos.xy));
+        var oldVelo = pos - prevPos;
 
+        // calculate the reflect vector
+        var newVelo = reflect(oldVelo, reflectNormal);
+        pos = constrainPos + (newVelo * bounceVecLen);
+        prevPos = pos - (newVelo * 0.8);
+      }
+    }
 
-    //     // calculate the reflect vector
-    //     var newVelo = reflect(oldVelo, reflectNormal);
-    //     pos = constrainPos + (newVelo * bounceVecLen);
-    //     prevPos = pos - (newVelo);
-        
-    //   }
-    // }
-
-    // // update
-    // {
-    //   var velocity = pos - prevPos;
-    //   prevPos = pos;
-    //   pos = pos + velocity + (accel * (params.deltaTime * params.deltaTime));
-    // }
+    // update
+    {
+      var velocity = pos - prevPos;
+      prevPos = pos;
+      pos = pos + velocity + (accel * (params.deltaTime * params.deltaTime));
+    }
 
     // load back
     {
-      pos.y = pos.y + 1;
+      // pos.y = pos.y - 1;
       // verletObjects[index].accel = vec4(0);
       verletObjects[index].pos = vec4(pos.xy, 0, 0);
       verletObjects[index].prevPos = vec4(prevPos.xy, 0, 0);
@@ -152,8 +150,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       var binx = i32((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
       var biny = i32((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
       var binIndex = twoToOne(vec2<i32>(binx, biny), binParams.x);
-      // binOut.bin[index] = binIndex;
-      binOut.bin[index] = i32(binIn.binReindex[i]);
+      binOut.bin[index] = binIndex;
     }
   }
 }

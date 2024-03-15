@@ -9,6 +9,10 @@ import { Verlet } from './verlet/verlet';
 const simParamsArrayLength = 12;
 const simParams = new Float32Array(simParamsArrayLength);
 
+const doGPUCompute = false;
+
+export const stepCount = 8;
+
 let mvp = mat4.identity();
 
 export default class Renderer {
@@ -205,10 +209,16 @@ export default class Renderer {
 
   async render() {
     let frame = 0;
-    this.startFrameMS = performance.timeOrigin + performance.now();
-    this.lastFrameMS = performance.timeOrigin + performance.now();
+    // this.startFrameMS = performance.timeOrigin + performance.now();
+    // this.lastFrameMS = performance.timeOrigin + performance.now();
+    this.startFrameMS = Date.now();
+    this.lastFrameMS = Date.now();
     do {
-      const now = performance.timeOrigin + performance.now();
+      // const now = performance.timeOrigin + performance.now();
+      // const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
+      // const totalTime = (now - this.startFrameMS) / 1000;
+
+      const now = Date.now();
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
       const totalTime = (now - this.startFrameMS) / 1000;
 
@@ -221,14 +231,16 @@ export default class Renderer {
       //   clickPointY = (input.analog.clickY * devicePixelRatio) - (canvas.height / 2);
       // }
 
-      const stepCount = 8;
+      this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
       for (let i = 0; i < stepCount; i++) {
-        this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
-        
-        const commandBuffers = await this.verlet.compute(this.device, this.uniformBindGroup);
+        if (doGPUCompute) {
+          const commandBuffers = await this.verlet.compute(this.device, this.uniformBindGroup);
 
-        this.queue.submit(commandBuffers);
-        await this.queue.onSubmittedWorkDone();
+          this.queue.submit(commandBuffers);
+          await this.queue.onSubmittedWorkDone();
+        } else {
+          this.verlet.computeCPU(this.device, simParams);
+        }
       }
       
       {
