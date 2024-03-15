@@ -145,7 +145,7 @@ export class VerletBinComputer {
     // const binSquareSize = Math.ceil(gridPixelDim / 128);
     // const binGridSquareCount = 16384; // 128*128
 
-    const binResolution = 128;
+    const binResolution = 64;
     const binGridWidth = binResolution;
     const binGridHeight = binResolution;
     const binSquareSize = Math.ceil(gridPixelDim / binResolution);
@@ -376,7 +376,7 @@ export class VerletBinComputer {
       const neighborIndexes = [
         binIndex - this.binParams[1] - 1, binIndex - this.binParams[1], binIndex - this.binParams[1] + 1,
         binIndex                     - 1, binIndex,                     binIndex                     + 1,
-        binIndex + this.binParams[1] - 1, binIndex + this.binParams[1], binIndex + this.binParams[1] + 1
+        binIndex + this.binParams[1] - 1, binIndex + this.binParams[1], binIndex + this.binParams[1] + 1,
       ];
 
       let startSelfIndex = this.binPrefixSumData[binIndex - 1];
@@ -389,6 +389,7 @@ export class VerletBinComputer {
           verletObjs.dataArray[(index * verletObjs.dataNumFloats)],
           verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 1]);
         const radius = verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 15];
+        let offset = vec2.create(0,0);
 
         for (let neighborIndexIndex = 0; neighborIndexIndex < 9; neighborIndexIndex++) {
           let neighborIndex = neighborIndexes[neighborIndexIndex];
@@ -399,6 +400,8 @@ export class VerletBinComputer {
           let startOtherIndex = this.binPrefixSumData[neighborIndex - 1];
           if (neighborIndex === 0)
             startOtherIndex = 0;
+          else if (neighborIndex === 4)
+            startOtherIndex = i + 1;
     
           for (var j = startOtherIndex; j < this.binPrefixSumData[neighborIndex]; j++) {
             const otherIndex = this.binReindexData[j];
@@ -421,11 +424,13 @@ export class VerletBinComputer {
                 var massRatio = 0.5;
                 var responseCoef = 0.65;
                 var delta = 0.5 * responseCoef * (dist - minDist);
-                vec2.addScaled(pos, n, -massRatio * delta, pos);
+                vec2.addScaled(offset, n, -massRatio * delta, offset);
               }
             }
           } 
         }
+
+        vec2.add(pos, offset, pos);
 
         // write back data
         verletObjs.dataArray[(index * verletObjs.dataNumFloats)] = pos[0];
