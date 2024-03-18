@@ -226,8 +226,8 @@ export default class Renderer {
 
       this.renderStats.updateFPS((now - this.lastFrameMS) / 1000, this.overlayElement);
 
-      let clickPointX = 0;
-      let clickPointY = 0;
+      let clickPointX = 0.1;
+      let clickPointY = 0.1;
       // if (input.analog.right) {
       //   clickPointX = (input.analog.clickX * devicePixelRatio) - (canvas.width / 2);
       //   clickPointY = (input.analog.clickY * devicePixelRatio) - (canvas.height / 2);
