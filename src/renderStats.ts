@@ -4,12 +4,12 @@ export default class RenderStats {
   private lambda6 = 0.5720236015483775;
   updateFPS(frameTime: number, overlayElement: HTMLElement) {
     this.frameTimes.push(frameTime);
-    if (this.frameTimes.length >= 20)
+    if (this.frameTimes.length >= 1000)
       this.frameTimes.shift();
 
     const ema = this.ema6();
-    overlayElement.innerText = `${Math.round((1/ema.pop()) * 100) / 100}`;
-    // overlayElement.innerText = `${Math.round(1/ema.pop())}`;
+    // overlayElement.innerText = `${Math.round((1/ema.pop()) * 100) / 100}`;
+    overlayElement.innerText = `${Math.round(1/ema.pop())}`;
   }
 
   private exponentialAverage(values: number[], lambda: number): number[] {

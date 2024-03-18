@@ -1,10 +1,5 @@
-@group(0) @binding(1) var<uniform> params: Params;
-
-@group(1) @binding(0) var<uniform> binParams: BinParams;
-
 @group(2) @binding(0) var<storage, read_write> verletObjects: array<VerletObject>;
-@group(2) @binding(1) var<storage, read> binIn: BinInfoIn;
-@group(2) @binding(2) var<storage, read_write> binOut: BinInfoOut;
+@group(2) @binding(1) var<storage, read_write> binIn: BinInfoIn;
 
 fn oneToTwo(index: i32, gridWidth: i32) -> vec2<i32> {
   var row = index / gridWidth;
@@ -44,22 +39,24 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var constrainRadius = params.constrainRadius;
 
   // iterate over all objects in the current binIndex
-  for (var i = binIn.binPrefixSum[binIndex - 1]; i < binIn.binPrefixSum[binIndex]; i++) {
+  var startSelfIndex = 0;
+  if (binIndex > 0) {
+    startSelfIndex = binIn.binPrefixSum[binIndex - 1];
+  }
+
+  for (var i = startSelfIndex; i < binIn.binPrefixSum[binIndex]; i++) {
     var index = binIn.binReindex[i];
 
     var pos = verletObjects[index].pos.xy;
     var prevPos = verletObjects[index].prevPos.xy;
+    var radius = verletObjects[index].colorAndRadius.w;
+    var accel = verletObjects[index].accel.xy;
 
     // sometimes accelerate a particle to add FUN
-    if (hash11((params.totalTime * f32(index))) > 0.9999) {
-      var velocityDir = normalize(pos - prevPos);
-      prevPos = pos - (velocityDir * 5.0);
-    }
-
-    var radius = verletObjects[index].colorAndRadius.w;
-
-    // var accel = verletObjects[index].accel.xy;
-    var accel = vec2<f32>(0, 500.0);
+    // if (hash11((params.totalTime * f32(index))) > 0.9999) {
+    //   var velocityDir = normalize(pos - prevPos);
+    //   prevPos = pos - (velocityDir * 5.0);
+    // }
 
     // accelerate
     if (params.clickPoint.x != 0 && params.clickPoint.y != 0) {
@@ -70,11 +67,11 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       var posDiffNorm = posDiff / mag;
       accel = posDiffNorm * 300;
     } else {
-      accel += vec2<f32>(0, 0.0);
+      accel += vec2<f32>(0.0, 450.0);
     }
 
     // collide
-    var offset = vec2(0.0);
+    var offset = verletObjects[index].collisionOffset.xy;
 
     for (var neighborIndexIndex = 0; neighborIndexIndex < 9; neighborIndexIndex++) {
       var neighborIndex = neighborIndexes[neighborIndexIndex];
@@ -82,15 +79,20 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
         continue;
       }
 
-      for (var i = binIn.binPrefixSum[neighborIndex - 1]; i < binIn.binPrefixSum[neighborIndex]; i++) {
-        var otherIndex = binIn.binReindex[i];
-        if (otherIndex != index && verletObjects[otherIndex].colorAndRadius.w != 0) {
-          var _pos = verletObjects[otherIndex].pos.xy;
-          var _radius = verletObjects[otherIndex].colorAndRadius.w;
+      var startOtherIndex = 0;
+      if (neighborIndex > 0) {
+        startOtherIndex = binIn.binPrefixSum[neighborIndex - 1];
+      }
 
-          var v = pos - _pos;
+      for (var j = startOtherIndex; j < binIn.binPrefixSum[neighborIndex]; j++) {
+        var otherIndex = binIn.binReindex[j];
+        var otherRadius = verletObjects[otherIndex].colorAndRadius.w;
+        if (otherIndex != index && otherRadius != 0) {
+          var otherPos = verletObjects[otherIndex].pos.xy;
+
+          var v = pos - otherPos;
           var dist2 = dot(v, v);
-          var minDist = radius + _radius;
+          var minDist = radius + otherRadius;
           if (dist2 < minDist * minDist) {
             var dist = sqrt(dist2);
             var n = v / dist;
@@ -98,13 +100,14 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
             var massRatio = 0.5;
             var responseCoef = 0.65;
             var delta = 0.5 * responseCoef * (dist - minDist);
-            offset += n * (massRatio * delta);
+            offset += n * -(massRatio * delta);
           }
         }
       }
     }
     
-    pos -= offset;
+    pos += offset;
+    offset = vec2<f32>(0.0, 0.0);
   
     // constrain
     {
@@ -138,6 +141,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       var velocity = pos - prevPos;
       prevPos = pos;
       pos = pos + velocity + (accel * (params.deltaTime * params.deltaTime));
+      accel = vec2<f32>(0.0, 0.0);
     }
 
     // load back
@@ -146,11 +150,14 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       // verletObjects[index].accel = vec4(0);
       verletObjects[index].pos = vec4(pos.xy, 0, 0);
       verletObjects[index].prevPos = vec4(prevPos.xy, 0, 0);
+      verletObjects[index].collisionOffset = vec4(offset.xy, 0, 0);
+      verletObjects[index].accel = vec4(accel.xy, 0, 0);
 
       var binx = i32((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
       var biny = i32((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
-      var binIndex = twoToOne(vec2<i32>(binx, biny), binParams.x);
-      binOut.bin[index] = binIndex;
+      // var binIndex = twoToOne(vec2<i32>(binx, biny), binParams.x);
+      binOut.bin[index] = (biny * binParams.x) + binx;
+      binIn.bin[index] = (biny * binParams.x) + binx;
     }
   }
 }

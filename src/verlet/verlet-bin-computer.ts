@@ -1,20 +1,42 @@
-import { computeShaderHeader } from './verlet-computer-shader-header';
-import shaderCode from './verlet-bin-computer.wgsl';
+import { vec2 } from 'wgpu-matrix';
+
 import { Verlet } from './verlet';
 
-import { vec2 } from 'wgpu-matrix';
+
+import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
+
+import applyForcesShaderCode from './shaders/apply-forces.wgsl';
+// import collideShaderCode from './shaders/collide.wgsl';
+import collideShaderCode from './shaders/bin-collide.wgsl';
+import constrainShaderCode from './shaders/constrain.wgsl';
+import integrateShaderCode from './shaders/integrate.wgsl';
+
+import binSumShaderCode from './shaders/bin-sum.wgsl';
+import binPrefixSumShaderCode from './shaders/bin-prefix-sum.wgsl';
+import binReindexShaderCode from './shaders/bin-reindex.wgsl';
 
 export class VerletBinComputer {
   uniformBindGroupLayout: GPUBindGroupLayout;
   storageBindGroupLayout: GPUBindGroupLayout;
   pipelineLayout: GPUPipelineLayout;
 
-  mainPipeline: GPUComputePipeline;
+  applyForcesPipeline: GPUComputePipeline;
+  collidePipeline: GPUComputePipeline;
+  constrainPipeline: GPUComputePipeline;
+  integratePipeline: GPUComputePipeline;
+
   binSumPipeline: GPUComputePipeline;
   binPrefixSumPipeline: GPUComputePipeline;
   binReindexPipeline: GPUComputePipeline;
 
-  shaderModule: GPUShaderModule;
+  applyForcesShaderModule: GPUShaderModule;
+  collideShaderModule: GPUShaderModule;
+  constrainShaderModule: GPUShaderModule;
+  integrateShaderModule: GPUShaderModule;
+
+  binSumShaderModule: GPUShaderModule;
+  binPrefixSumShaderModule: GPUShaderModule;
+  binReindexShaderModule: GPUShaderModule;
 
   passDescriptor: GPUComputePassDescriptor;
 
@@ -47,7 +69,7 @@ export class VerletBinComputer {
   binReindexBufferOffset: number;
 
   binInfoBufferSize: number;
-  binInfoBuffers: GPUBuffer[];
+  binInfoBuffer: GPUBuffer;
 
   binReadBuffer: GPUBuffer;
 
@@ -55,8 +77,32 @@ export class VerletBinComputer {
   storageBindGroup: GPUBindGroup;
 
   constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice, objectCount: number) {
-    this.shaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount) + shaderCode
+    this.binSumShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + binSumShaderCode
+    });
+
+    this.binPrefixSumShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + binPrefixSumShaderCode
+    });
+
+    this.binReindexShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + binReindexShaderCode
+    });
+
+    this.applyForcesShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + applyForcesShaderCode
+    });
+
+    this.collideShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + collideShaderCode
+    });
+
+    this.constrainShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + constrainShaderCode
+    });
+
+    this.integrateShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 16384) + integrateShaderCode
     });
 
     this.uniformBindGroupLayout = device.createBindGroupLayout({
@@ -73,11 +119,7 @@ export class VerletBinComputer {
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'storage' },
       }, {
-        binding: 1, // binIn
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'read-only-storage' },
-      }, {
-        binding: 2, // binOut
+        binding: 1, // binInfo
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'storage' },
       }]
@@ -91,10 +133,34 @@ export class VerletBinComputer {
       ]
     });
 
-    this.mainPipeline = device.createComputePipeline({
+    this.applyForcesPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
-        module: this.shaderModule,
+        module: this.applyForcesShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.collidePipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.collideShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.constrainPipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.constrainShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.integratePipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.integrateShaderModule,
         entryPoint: 'main',
       },
     });
@@ -102,24 +168,24 @@ export class VerletBinComputer {
     this.binSumPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
-        module: this.shaderModule,
-        entryPoint: 'binSum',
+        module: this.binSumShaderModule,
+        entryPoint: 'main',
       },
     });
 
     this.binPrefixSumPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
-        module: this.shaderModule,
-        entryPoint: 'binPrefixSum',
+        module: this.binPrefixSumShaderModule,
+        entryPoint: 'main',
       },
     });
 
     this.binReindexPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
-        module: this.shaderModule,
-        entryPoint: 'binReindex',
+        module: this.binReindexShaderModule,
+        entryPoint: 'main',
       },
     });
 
@@ -135,22 +201,25 @@ export class VerletBinComputer {
     this.objectCount = objectCount;
     const gridPixelDim = bounds;
     const binParamsArrayLength = 4;
-    // const binSquareSize = Math.max(verletObjectRadius * 2, 20);
+
+    // const binSquareSize = voDataArray[15] * 2;
     // const binGridWidth = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     // const binGridHeight = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
 
-    // const binGridWidth = 128;
-    // const binGridHeight = 128;
-    // const binSquareSize = Math.ceil(gridPixelDim / 128);
-    // const binGridSquareCount = 16384; // 128*128
-
-    const binResolution = 64;
-    const binGridWidth = binResolution;
-    const binGridHeight = binResolution;
-    const binSquareSize = Math.ceil(gridPixelDim / binResolution);
-    const binGridSquareCount = binResolution * binResolution;
-
+    const binGridWidth = 128;
+    const binGridHeight = 128;
+    const binSquareSize = Math.ceil(gridPixelDim / 128);
+    const binGridSquareCount = 16384; // 128*128
+    
+    // const binResolution = 512;
+    // const binGridWidth = binResolution;
+    // const binGridHeight = binResolution;
+    // const binSquareSize = Math.ceil(gridPixelDim / binResolution);
+    // const binGridSquareCount = binResolution * binResolution;
+    
+    console.log(`gridPixelDim:${gridPixelDim}, binGridWidth:${binGridWidth}, binSquareSize:${binSquareSize}, binGridSquareCount: ${binGridSquareCount}`);
+    
     this.binParams = new Uint32Array([
       binSquareSize,     // bin square size
       binGridWidth,      // grid width
@@ -208,22 +277,13 @@ export class VerletBinComputer {
     // console.log(`${bounds} ${binSquareSize} ${binGridWidth}`);
 
     this.binInfoBufferSize = this.binReindexBufferOffset + this.binReindexBufferSize;
-    this.binInfoBuffers = new Array(2);
-    this.binInfoBuffers[0] = device.createBuffer({
+    this.binInfoBuffer = device.createBuffer({
       size: this.binInfoBufferSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       mappedAtCreation: true
     });
-    new Float32Array(this.binInfoBuffers[0].getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
-    this.binInfoBuffers[0].unmap();
-
-    this.binInfoBuffers[1] = device.createBuffer({
-      size: this.binInfoBufferSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-      mappedAtCreation: true
-    });
-    new Float32Array(this.binInfoBuffers[1].getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
-    this.binInfoBuffers[1].unmap();
+    new Float32Array(this.binInfoBuffer.getMappedRange(this.binBufferOffset, this.binBufferSize)).set(this.binData);
+    this.binInfoBuffer.unmap();
 
     this.binReadBuffer = device.createBuffer({
       size: this.binBufferSize,
@@ -231,7 +291,7 @@ export class VerletBinComputer {
     });
 
     this.uniformBindGroup = device.createBindGroup({
-      layout: this.mainPipeline.getBindGroupLayout(1),
+      layout: this.binSumPipeline.getBindGroupLayout(1),
       entries: [{
           binding: 0,
           resource: { buffer: this.binParamsBuffer },
@@ -240,7 +300,7 @@ export class VerletBinComputer {
     });
 
     this.storageBindGroup = device.createBindGroup({
-      layout: this.mainPipeline.getBindGroupLayout(2),
+      layout: this.binSumPipeline.getBindGroupLayout(2),
       entries: [{
           binding: 0,
           resource: {
@@ -251,18 +311,11 @@ export class VerletBinComputer {
         }, {
           binding: 1,
           resource: {
-            buffer: this.binInfoBuffers[0],
+            buffer: this.binInfoBuffer,
             offset: 0,
             size: this.binInfoBufferSize,
           },
-        }, {
-          binding: 2,
-          resource: {
-            buffer: this.binInfoBuffers[1],
-            offset: 0,
-            size: this.binInfoBufferSize,
-          },
-        },
+        }
       ],
     });
   }
@@ -300,45 +353,39 @@ export class VerletBinComputer {
     // END BINNING
   }
 
-  async compute(device: GPUDevice, globalUniformBindGroup: GPUBindGroup): Promise<GPUCommandBuffer[]> {
-    // copy data from this.binInfoBuffers[1] to the read buffer
-    let commandEncoder = device.createCommandEncoder();
-    commandEncoder.copyBufferToBuffer(this.binInfoBuffers[1], 0, this.binReadBuffer, 0, this.binBufferSize);
+  async compute(commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup) {
+    const voWorkgroupCount = Math.ceil(this.objectCount / 64);
+    const binWorkgroupCount = Math.ceil(this.binParams[3] / 64);
 
-    // copy data from read buffer to cpu arrays
-    await this.binReadBuffer.mapAsync(GPUMapMode.READ, 0, this.binBufferSize);
-    this.binData = new Int32Array(this.binReadBuffer.getMappedRange(0, this.binBufferSize).slice(0));
-    this.binReadBuffer.unmap();
-
-    this.doBinning();
-
-    // copy data back to this.binInfoBuffers[0]
-    device.queue.writeBuffer(this.binInfoBuffers[0], this.binBufferOffset, this.binData);
-    device.queue.writeBuffer(this.binInfoBuffers[0], this.binSumBufferOffset, this.binSumData);
-    device.queue.writeBuffer(this.binInfoBuffers[0], this.binPrefixSumBufferOffset, this.binPrefixSumData);
-    device.queue.writeBuffer(this.binInfoBuffers[0], this.binIndexTrackerBufferOffset, this.binIndexTrackerData);
-    device.queue.writeBuffer(this.binInfoBuffers[0], this.binReindexBufferOffset, this.binReindexData);
-    
-    const workgroupCount = Math.ceil(this.objectCount / 64);
-    
-    // let commandEncoder = device.createCommandEncoder();
     let passEncoder = commandEncoder.beginComputePass();
     passEncoder.setBindGroup(0, globalUniformBindGroup);
     passEncoder.setBindGroup(1, this.uniformBindGroup);
     passEncoder.setBindGroup(2, this.storageBindGroup);
 
-    passEncoder.setPipeline(this.mainPipeline);
-    passEncoder.dispatchWorkgroups(workgroupCount);
+    // binning
+    passEncoder.setPipeline(this.binSumPipeline);
+    passEncoder.dispatchWorkgroups(binWorkgroupCount);
+
+    passEncoder.setPipeline(this.binPrefixSumPipeline);
+    passEncoder.dispatchWorkgroups(binWorkgroupCount);
+
+    passEncoder.setPipeline(this.binReindexPipeline);
+    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+
+    // verlet integration
+    passEncoder.setPipeline(this.applyForcesPipeline);
+    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+
+    passEncoder.setPipeline(this.collidePipeline);
+    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+
+    passEncoder.setPipeline(this.constrainPipeline);
+    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+
+    passEncoder.setPipeline(this.integratePipeline);
+    passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
     passEncoder.end();
-    
-    return [commandEncoder.finish()];
-  }
-
-  twoToOne(posx: number, posy: number, gridWidth: number) {
-    const row = posy;
-    const col = posx;
-    return (row * gridWidth) + col;
   }
 
   computeCPU(verletObjs: Verlet, simParams: Float32Array) {
@@ -382,13 +429,13 @@ export class VerletBinComputer {
       let startSelfIndex = this.binPrefixSumData[binIndex - 1];
       if (binIndex === 0)
         startSelfIndex = 0;
+
       for (let i = startSelfIndex; i < this.binPrefixSumData[binIndex]; i++) {
-        const index = this.binReindexData[i];
+        const index = this.binReindexData[i] * verletObjs.dataNumFloats;
     
-        let pos = vec2.create(
-          verletObjs.dataArray[(index * verletObjs.dataNumFloats)],
-          verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 1]);
-        const radius = verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 15];
+        const pos = vec2.create(verletObjs.dataArray[index], verletObjs.dataArray[index + 1]);
+        const radius = verletObjs.dataArray[index + 15];
+        
         let offset = vec2.create(0,0);
 
         for (let neighborIndexIndex = 0; neighborIndexIndex < 9; neighborIndexIndex++) {
@@ -400,78 +447,43 @@ export class VerletBinComputer {
           let startOtherIndex = this.binPrefixSumData[neighborIndex - 1];
           if (neighborIndex === 0)
             startOtherIndex = 0;
-          else if (neighborIndex === 4)
-            startOtherIndex = i + 1;
     
           for (var j = startOtherIndex; j < this.binPrefixSumData[neighborIndex]; j++) {
-            const otherIndex = this.binReindexData[j];
-            const otherRadius = verletObjs.dataArray[(otherIndex * verletObjs.dataNumFloats) + 15];
+            const otherIndex = this.binReindexData[j] * verletObjs.dataNumFloats;
+            const otherRadius = verletObjs.dataArray[otherIndex + 15];
             if (otherIndex != index && otherRadius !== 0) {
-              let otherPos = vec2.create(
-                verletObjs.dataArray[(otherIndex * verletObjs.dataNumFloats)],
-                verletObjs.dataArray[(otherIndex * verletObjs.dataNumFloats) + 1]);
-                
+              const otherPos = vec2.create(verletObjs.dataArray[otherIndex], verletObjs.dataArray[otherIndex + 1]);
               // console.log(`Testing ${index} [${pos[0].toFixed(0)} ${pos[1].toFixed(0)}] <=> ${otherIndex} [${otherPos[0].toFixed(0)} ${otherPos[1].toFixed(0)}]`);
               
-              var v = vec2.sub(pos, otherPos);
-              var dist2 = vec2.lenSq(v);
-              var minDist = radius + otherRadius;
+              const v = vec2.sub(pos, otherPos);
+              const dist2 = vec2.lenSq(v);
+              const minDist = radius + otherRadius;
               if (dist2 < minDist * minDist) {
-                // console.log("collide");
-                var dist = Math.sqrt(dist2);
-                var n = vec2.scale(v, 1 / dist);
+                const dist = Math.sqrt(dist2);
+                const n = vec2.scale(v, 1 / dist);
       
-                var massRatio = 0.5;
-                var responseCoef = 0.65;
-                var delta = 0.5 * responseCoef * (dist - minDist);
+                const massRatio = 0.5;
+                const responseCoef = 0.65;
+                const delta = 0.5 * responseCoef * (dist - minDist);
                 vec2.addScaled(offset, n, -massRatio * delta, offset);
               }
             }
           } 
         }
 
-        vec2.add(pos, offset, pos);
-
         // write back data
-        verletObjs.dataArray[(index * verletObjs.dataNumFloats)] = pos[0];
-        verletObjs.dataArray[(index * verletObjs.dataNumFloats) + 1] = pos[1];
+        verletObjs.dataArray[index + 16] = offset[0];
+        verletObjs.dataArray[index + 17] = offset[1];
       }
     }
 
-
+    // apply collision offsets
     for (let index = 0; index < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
-      index += verletObjs.dataNumFloats;
-      continue;
-      let pos = vec2.create(verletObjs.dataArray[index], verletObjs.dataArray[index + 1]);
-      const radius = verletObjs.dataArray[index + 15];
-      
-      for (let otherIndex = index + verletObjs.dataNumFloats; otherIndex < verletObjs.objectCount * verletObjs.dataNumFloats; ) {
-        let otherPos = vec2.create(verletObjs.dataArray[otherIndex], verletObjs.dataArray[otherIndex + 1]);
-        const otherRadius = verletObjs.dataArray[otherIndex + 15];
+      verletObjs.dataArray[index] += verletObjs.dataArray[index + 16];
+      verletObjs.dataArray[index + 1] += verletObjs.dataArray[index + 17];
 
-        var v = vec2.sub(pos, otherPos);
-        var dist2 = vec2.lenSq(v);
-        var minDist = radius + otherRadius;
-        if (dist2 < minDist * minDist) {
-          var dist = Math.sqrt(dist2);
-          var n = vec2.scale(v, 1 / dist);
-
-          var massRatio = 0.5;
-          var responseCoef = 0.65;
-          var delta = 0.5 * responseCoef * (dist - minDist);
-          vec2.addScaled(pos, n, -massRatio * delta, pos);
-          vec2.addScaled(otherPos, n, massRatio * delta, otherPos);
-
-          verletObjs.dataArray[otherIndex] = otherPos[0];
-          verletObjs.dataArray[otherIndex + 1] = otherPos[1];
-        }
-        
-        otherIndex += verletObjs.dataNumFloats;
-      }
-
-      // write back data
-      verletObjs.dataArray[index] = pos[0];
-      verletObjs.dataArray[index + 1] = pos[1];
+      verletObjs.dataArray[index + 16] = 0;
+      verletObjs.dataArray[index + 17] = 0;
 
       index += verletObjs.dataNumFloats;
     }
@@ -503,7 +515,7 @@ export class VerletBinComputer {
         // calculate the reflect vector
         const newVelo = vec2.sub(oldVelo, vec2.scale(reflectNormal, 2 * vec2.dot(reflectNormal, oldVelo)));
         pos = vec2.addScaled(constrainPos, newVelo, bounceVecLen);
-        prevPos = vec2.addScaled(pos, newVelo, -0.8);
+        prevPos = vec2.addScaled(pos, newVelo, -0.7);
 
         // write data back
         verletObjs.dataArray[index] = pos[0];

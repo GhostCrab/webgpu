@@ -9,7 +9,7 @@ import { Verlet } from './verlet/verlet';
 const simParamsArrayLength = 12;
 const simParams = new Float32Array(simParamsArrayLength);
 
-const doGPUCompute = false;
+const doGPUCompute = true;
 
 export const stepCount = 8;
 
@@ -174,6 +174,8 @@ export default class Renderer {
       }]
     });
 
+    console.log(this.canvas);
+
     this.verlet = new Verlet(this.canvas.height, globalUniformBindGroupLayout, this.device);
   }
 
@@ -231,13 +233,12 @@ export default class Renderer {
       //   clickPointY = (input.analog.clickY * devicePixelRatio) - (canvas.height / 2);
       // }
 
+      let commandEncoder = this.device.createCommandEncoder();
+
       this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
       for (let i = 0; i < stepCount; i++) {
         if (doGPUCompute) {
-          const commandBuffers = await this.verlet.compute(this.device, this.uniformBindGroup);
-
-          this.queue.submit(commandBuffers);
-          await this.queue.onSubmittedWorkDone();
+          await this.verlet.compute(commandEncoder, this.uniformBindGroup);
         } else {
           this.verlet.computeCPU(this.device, simParams);
         }
@@ -247,7 +248,6 @@ export default class Renderer {
         // ⏭ Acquire next image from context
         this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView()); 
 
-        let commandEncoder = this.device.createCommandEncoder();
         let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
         passEncoder.setBindGroup(0, this.uniformBindGroup);
         passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
@@ -256,16 +256,17 @@ export default class Renderer {
         this.verlet.render(passEncoder);
         
         passEncoder.end();
-
-        this.queue.submit([commandEncoder.finish()]);
         // await this.queue.onSubmittedWorkDone();
       }
+
+      this.queue.submit([commandEncoder.finish()]);
   
       // Wait for repaint
       this.lastFrameMS = now;
       
       // vsync
-      await this.sleep();
+      // await this.sleep();
+      await this.queue.onSubmittedWorkDone();
     } while (this.running);
   }
 

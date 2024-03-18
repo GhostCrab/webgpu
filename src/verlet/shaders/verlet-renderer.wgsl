@@ -13,9 +13,7 @@ fn vertex_main(
   @location(0) position: vec4<f32>,
   @location(1) uv: vec2<f32>,
   @location(2) i_pos: vec4<f32>,
-  @location(3) i_prevPos: vec4<f32>,
-  @location(4) i_accel: vec4<f32>,
-  @location(5) i_color_and_radius: vec4<f32>
+  @location(3) i_color_and_radius: vec4<f32>
 ) -> VertexOutput {
   // return VertexOutput(storageBuf.modelViewProjectionMatrix * position, uv);
   if (i_color_and_radius.w == 0)

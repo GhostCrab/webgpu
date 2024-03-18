@@ -1,6 +1,5 @@
 import { stepCount } from "../renderer";
 import { VerletBinComputer } from "./verlet-bin-computer";
-import { VerletComputer } from "./verlet-computer";
 import { VerletRenderer } from "./verlet-renderer";
 
 function lerp(a: number, b: number, alpha: number) {
@@ -37,7 +36,6 @@ export class Verlet {
   dataArray: Float32Array;
 
   renderer: VerletRenderer;
-  // computer: VerletComputer;
   computer: VerletBinComputer;
 
   bounds: number;
@@ -46,11 +44,11 @@ export class Verlet {
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectRadius = 3;
-    this.objectCount = 1000;
-    // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,
-    // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR
-    this.dataNumFloats = 16;
+    this.objectRadius = 1;
+    this.objectCount = 10000;
+    // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,    16, 17, 18, 19,          
+    // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
+    this.dataNumFloats = 20;
     this.dataArray = new Float32Array(this.dataNumFloats * this.objectCount);
   
     for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
@@ -61,7 +59,8 @@ export class Verlet {
       this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
       this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
   
-      const rgb = HSVtoRGB(0, lerp(0.2, 0.9, Math.random()), 1);
+      // const rgb = HSVtoRGB( Math.random(), lerp(0.2, 0.9, Math.random()), 1);
+      const rgb = HSVtoRGB( Math.random(), 1, 1);
   
       this.dataArray[i+12] = rgb.r;
       this.dataArray[i+13] = rgb.g;
@@ -72,7 +71,6 @@ export class Verlet {
     }
 
     this.renderer = new VerletRenderer(globalUniformBindGroupLayout, device);
-    // this.computer = new VerletComputer(globalUniformBindGroupLayout, device, this.objectCount);
     this.computer = new VerletBinComputer(globalUniformBindGroupLayout, device, this.objectCount);
 
     this.initBuffers(device);
@@ -87,7 +85,6 @@ export class Verlet {
     new Float32Array(this.buffer.getMappedRange()).set(this.dataArray);
     this.buffer.unmap();
 
-    // this.computer.initBuffers(device, this.bounds, this.objectCount, this.buffer);
     this.computer.initBuffers(device, this.bounds, this.objectCount, this.dataArray, this.dataNumFloats, this.buffer);
   }
 
@@ -95,17 +92,11 @@ export class Verlet {
     this.renderer.render(passEncoder, this.buffer, this.objectCount);
   }
 
-  async compute(device: GPUDevice, globalUniformBindGroup: GPUBindGroup): Promise<GPUCommandBuffer[]> {
-    return this.computer.compute(device, globalUniformBindGroup);
+  async compute(commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup) {
+    this.computer.compute(commandEncoder, globalUniformBindGroup);
   }
 
   computeCPU(device: GPUDevice, simParams: Float32Array) {
-    // for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
-    //   this.dataArray[i+1] = this.dataArray[i+1] + (10 * simParams[1]);
-
-    //   i += this.dataNumFloats;
-    // }
-
     this.computer.computeCPU(this, simParams);
 
     device.queue.writeBuffer(this.buffer, 0, this.dataArray);

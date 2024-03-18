@@ -1,10 +1,5 @@
-@group(0) @binding(1) var<uniform> params: Params;
-
-@group(1) @binding(0) var<uniform> binParams: BinParams;
-
 @group(2) @binding(0) var<storage, read_write> verletObjects: array<VerletObject>;
 @group(2) @binding(1) var<storage, read_write> binIn: BinInfoIn;
-@group(2) @binding(2) var<storage, read_write> binOut: BinInfoOut;
 
 fn oneToTwo(index: i32, gridWidth: i32) -> vec2<i32> {
   var row = index / gridWidth;

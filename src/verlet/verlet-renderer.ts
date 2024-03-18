@@ -1,5 +1,5 @@
 import { Quad } from "../quad";
-import shaderCode from './verlet-renderer.wgsl';
+import shaderCode from './shaders/verlet-renderer.wgsl';
 
 export class VerletRenderer implements GPURenderPipelineDescriptor {
   // GPURenderPipelineDescriptor members
@@ -79,7 +79,7 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
     // quad buffer layout takes positions 0 - 1
     return {
       // instanced particles buffer
-      arrayStride: 16 * 4,
+      arrayStride: 20 * 4,
       stepMode: 'instance',
       attributes: [{
           // instance position
@@ -87,21 +87,11 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
           offset: 0,
           format: 'float32x4',
         }, {
-          // instance previous position
-          shaderLocation: 3,
-          offset: 4 * 4,
-          format: 'float32x4',
-        }, {
-          // instance acceleration
-          shaderLocation: 4,
-          offset: 8 * 4,
-          format: 'float32x4',
-        }, {
           // instance rgb-Radius
-          shaderLocation: 5,
+          shaderLocation: 3,
           offset: 12 * 4,
           format: 'float32x4',
-        },
+        }
       ],
     }
   }
