@@ -238,7 +238,7 @@ export default class Renderer {
       this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
       for (let i = 0; i < stepCount; i++) {
         if (doGPUCompute) {
-          await this.verlet.compute(commandEncoder, this.uniformBindGroup);
+          await this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup);
         } else {
           this.verlet.computeCPU(this.device, simParams);
         }

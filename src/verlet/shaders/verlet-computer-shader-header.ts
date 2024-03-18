@@ -23,16 +23,32 @@ export function computeShaderHeader(objectCount: number, binCount: number) {
     y: i32,
     count: u32,
   }
-  
-  struct BinSumInfo {
+
+  struct BinInfo {
     bin: array<i32, ${objectCount}>,
     binSum: array<u32, ${binCount}>,
     binPrefixSum: array<i32, ${binCount}>,
     binIndexTracker: array<i32, ${binCount}>,
     binReindex: array<u32, ${objectCount}>,
   }
+  
+  struct BinSumInfo {
+    bin: array<i32, ${objectCount}>,
+    binSum: array<atomic<u32>, ${binCount}>,
+    binPrefixSum: array<i32, ${binCount}>,
+    binIndexTracker: array<i32, ${binCount}>,
+    binReindex: array<u32, ${objectCount}>,
+  }
 
   struct BinPrefixSumInfo {
+    bin: array<i32, ${objectCount}>,
+    binSum: array<u32, ${binCount}>,
+    binPrefixSum: array<atomic<i32>, ${binCount}>,
+    binIndexTracker: array<i32, ${binCount}>,
+    binReindex: array<u32, ${objectCount}>,
+  }
+
+  struct BinReindexInfo {
     bin: array<i32, ${objectCount}>,
     binSum: array<u32, ${binCount}>,
     binPrefixSum: array<i32, ${binCount}>,

@@ -2,7 +2,6 @@ import { vec2 } from 'wgpu-matrix';
 
 import { Verlet } from './verlet';
 
-
 import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
 
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
@@ -11,8 +10,10 @@ import collideShaderCode from './shaders/bin-collide.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 
+import binClearShaderCode from './shaders/bin-clear.wgsl';
 import binSumShaderCode from './shaders/bin-sum.wgsl';
 import binPrefixSumShaderCode from './shaders/bin-prefix-sum.wgsl';
+import binIndexTrackShaderCode from './shaders/bin-index-track.wgsl';
 import binReindexShaderCode from './shaders/bin-reindex.wgsl';
 
 export class VerletBinComputer {
@@ -25,8 +26,10 @@ export class VerletBinComputer {
   constrainPipeline: GPUComputePipeline;
   integratePipeline: GPUComputePipeline;
 
+  binClearPipeline: GPUComputePipeline;
   binSumPipeline: GPUComputePipeline;
   binPrefixSumPipeline: GPUComputePipeline;
+  binIndexTrackPipeline: GPUComputePipeline;
   binReindexPipeline: GPUComputePipeline;
 
   applyForcesShaderModule: GPUShaderModule;
@@ -34,8 +37,10 @@ export class VerletBinComputer {
   constrainShaderModule: GPUShaderModule;
   integrateShaderModule: GPUShaderModule;
 
+  binClearShaderModule: GPUShaderModule;
   binSumShaderModule: GPUShaderModule;
   binPrefixSumShaderModule: GPUShaderModule;
+  binIndexTrackShaderModule: GPUShaderModule;
   binReindexShaderModule: GPUShaderModule;
 
   passDescriptor: GPUComputePassDescriptor;
@@ -77,32 +82,40 @@ export class VerletBinComputer {
   storageBindGroup: GPUBindGroup;
 
   constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice, objectCount: number) {
+    this.binClearShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 4096) + binClearShaderCode
+    });
+
     this.binSumShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + binSumShaderCode
+      code: computeShaderHeader(objectCount, 4096) + binSumShaderCode
     });
 
     this.binPrefixSumShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + binPrefixSumShaderCode
+      code: computeShaderHeader(objectCount, 4096) + binPrefixSumShaderCode
+    });
+
+    this.binIndexTrackShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, 4096) + binIndexTrackShaderCode
     });
 
     this.binReindexShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + binReindexShaderCode
+      code: computeShaderHeader(objectCount, 4096) + binReindexShaderCode
     });
 
     this.applyForcesShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + applyForcesShaderCode
+      code: computeShaderHeader(objectCount, 4096) + applyForcesShaderCode
     });
 
     this.collideShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + collideShaderCode
+      code: computeShaderHeader(objectCount, 4096) + collideShaderCode
     });
 
     this.constrainShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + constrainShaderCode
+      code: computeShaderHeader(objectCount, 4096) + constrainShaderCode
     });
 
     this.integrateShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 16384) + integrateShaderCode
+      code: computeShaderHeader(objectCount, 4096) + integrateShaderCode
     });
 
     this.uniformBindGroupLayout = device.createBindGroupLayout({
@@ -131,6 +144,46 @@ export class VerletBinComputer {
         this.uniformBindGroupLayout,  // @group(1)
         this.storageBindGroupLayout,  // @group(2)
       ]
+    });
+
+    this.binClearPipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.binClearShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.binSumPipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.binSumShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.binPrefixSumPipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.binPrefixSumShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.binIndexTrackPipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.binIndexTrackShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.binReindexPipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.binReindexShaderModule,
+        entryPoint: 'main',
+      },
     });
 
     this.applyForcesPipeline = device.createComputePipeline({
@@ -165,30 +218,6 @@ export class VerletBinComputer {
       },
     });
 
-    this.binSumPipeline = device.createComputePipeline({
-      layout: computePipelineLayout,
-      compute: {
-        module: this.binSumShaderModule,
-        entryPoint: 'main',
-      },
-    });
-
-    this.binPrefixSumPipeline = device.createComputePipeline({
-      layout: computePipelineLayout,
-      compute: {
-        module: this.binPrefixSumShaderModule,
-        entryPoint: 'main',
-      },
-    });
-
-    this.binReindexPipeline = device.createComputePipeline({
-      layout: computePipelineLayout,
-      compute: {
-        module: this.binReindexShaderModule,
-        entryPoint: 'main',
-      },
-    });
-
     this.passDescriptor = {};
   }
 
@@ -207,16 +236,16 @@ export class VerletBinComputer {
     // const binGridHeight = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
 
-    const binGridWidth = 128;
-    const binGridHeight = 128;
-    const binSquareSize = Math.ceil(gridPixelDim / 128);
-    const binGridSquareCount = 16384; // 128*128
+    // const binGridWidth = 32;
+    // const binGridHeight = 32;
+    // const binSquareSize = Math.ceil(gridPixelDim / 32);
+    // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
     
-    // const binResolution = 512;
-    // const binGridWidth = binResolution;
-    // const binGridHeight = binResolution;
-    // const binSquareSize = Math.ceil(gridPixelDim / binResolution);
-    // const binGridSquareCount = binResolution * binResolution;
+    const binResolution = 64;
+    const binGridWidth = binResolution;
+    const binGridHeight = binResolution;
+    const binSquareSize = Math.ceil(gridPixelDim / binResolution);
+    const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
     
     console.log(`gridPixelDim:${gridPixelDim}, binGridWidth:${binGridWidth}, binSquareSize:${binSquareSize}, binGridSquareCount: ${binGridSquareCount}`);
     
@@ -353,7 +382,7 @@ export class VerletBinComputer {
     // END BINNING
   }
 
-  async compute(commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup) {
+  async compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup) {
     const voWorkgroupCount = Math.ceil(this.objectCount / 64);
     const binWorkgroupCount = Math.ceil(this.binParams[3] / 64);
 
@@ -363,10 +392,16 @@ export class VerletBinComputer {
     passEncoder.setBindGroup(2, this.storageBindGroup);
 
     // binning
-    passEncoder.setPipeline(this.binSumPipeline);
+    passEncoder.setPipeline(this.binClearPipeline);
     passEncoder.dispatchWorkgroups(binWorkgroupCount);
 
+    passEncoder.setPipeline(this.binSumPipeline);
+    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+
     passEncoder.setPipeline(this.binPrefixSumPipeline);
+    passEncoder.dispatchWorkgroups(Math.ceil(this.binParams[3] / 16), Math.ceil(this.binParams[3] / 16));
+
+    passEncoder.setPipeline(this.binIndexTrackPipeline);
     passEncoder.dispatchWorkgroups(binWorkgroupCount);
 
     passEncoder.setPipeline(this.binReindexPipeline);
@@ -385,7 +420,7 @@ export class VerletBinComputer {
     passEncoder.setPipeline(this.integratePipeline);
     passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
-    passEncoder.end();
+    passEncoder.end();   
   }
 
   computeCPU(verletObjs: Verlet, simParams: Float32Array) {
