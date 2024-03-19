@@ -27,7 +27,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     var posDiffNorm = posDiff / mag;
     accel = posDiffNorm * 4000;
   } else {
-    accel += vec2<f32>(0.0, 0.0);
+    accel += vec2<f32>(0.0, 450.0);
   }
 
   // sometimes accelerate a particle to add FUN

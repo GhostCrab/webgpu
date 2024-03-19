@@ -7,6 +7,7 @@ import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
 // import collideShaderCode from './shaders/collide.wgsl';
 import collideShaderCode from './shaders/bin-collide.wgsl';
+import collide2ShaderCode from './shaders/bin-collide-2.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 
@@ -16,6 +17,10 @@ import binPrefixSumShaderCode from './shaders/bin-prefix-sum.wgsl';
 import binIndexTrackShaderCode from './shaders/bin-index-track.wgsl';
 import binReindexShaderCode from './shaders/bin-reindex.wgsl';
 
+const binResolution = 64;
+const binGridWidth = binResolution;
+const binGridHeight = binResolution;
+
 export class VerletBinComputer {
   uniformBindGroupLayout: GPUBindGroupLayout;
   storageBindGroupLayout: GPUBindGroupLayout;
@@ -23,6 +28,7 @@ export class VerletBinComputer {
 
   applyForcesPipeline: GPUComputePipeline;
   collidePipeline: GPUComputePipeline;
+  collide2Pipeline: GPUComputePipeline;
   constrainPipeline: GPUComputePipeline;
   integratePipeline: GPUComputePipeline;
 
@@ -34,6 +40,7 @@ export class VerletBinComputer {
 
   applyForcesShaderModule: GPUShaderModule;
   collideShaderModule: GPUShaderModule;
+  collide2ShaderModule: GPUShaderModule;
   constrainShaderModule: GPUShaderModule;
   integrateShaderModule: GPUShaderModule;
 
@@ -83,39 +90,43 @@ export class VerletBinComputer {
 
   constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice, objectCount: number) {
     this.binClearShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + binClearShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + binClearShaderCode
     });
 
     this.binSumShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + binSumShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + binSumShaderCode
     });
 
     this.binPrefixSumShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + binPrefixSumShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + binPrefixSumShaderCode
     });
 
     this.binIndexTrackShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + binIndexTrackShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + binIndexTrackShaderCode
     });
 
     this.binReindexShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + binReindexShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + binReindexShaderCode
     });
 
     this.applyForcesShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + applyForcesShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + applyForcesShaderCode
     });
 
     this.collideShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + collideShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + collideShaderCode
+    });
+
+    this.collide2ShaderModule = device.createShaderModule({
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + collide2ShaderCode
     });
 
     this.constrainShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + constrainShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + constrainShaderCode
     });
 
     this.integrateShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, 4096) + integrateShaderCode
+      code: computeShaderHeader(objectCount, binResolution * binResolution) + integrateShaderCode
     });
 
     this.uniformBindGroupLayout = device.createBindGroupLayout({
@@ -202,6 +213,14 @@ export class VerletBinComputer {
       },
     });
 
+    this.collide2Pipeline = device.createComputePipeline({
+      layout: computePipelineLayout,
+      compute: {
+        module: this.collide2ShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
     this.constrainPipeline = device.createComputePipeline({
       layout: computePipelineLayout,
       compute: {
@@ -241,9 +260,6 @@ export class VerletBinComputer {
     // const binSquareSize = Math.ceil(gridPixelDim / 32);
     // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
     
-    const binResolution = 64;
-    const binGridWidth = binResolution;
-    const binGridHeight = binResolution;
     const binSquareSize = Math.ceil(gridPixelDim / binResolution);
     const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
     
@@ -414,8 +430,11 @@ export class VerletBinComputer {
     passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
     if (doCollision) {
-      passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(voWorkgroupCount);
+      // passEncoder.setPipeline(this.collidePipeline);
+      // passEncoder.dispatchWorkgroups(voWorkgroupCount);
+
+      // passEncoder.setPipeline(this.collide2Pipeline);
+      // passEncoder.dispatchWorkgroups(binWorkgroupCount);
     }
 
     passEncoder.setPipeline(this.constrainPipeline);

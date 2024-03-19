@@ -13,7 +13,7 @@ const simParams = new Float32Array(simParamsArrayLength);
 
 const doGPUCompute = true;
 
-export const stepCount = 4;
+export const stepCount = 8;
 
 let mvp = mat4.identity();
 
@@ -73,7 +73,7 @@ export default class Renderer {
     this.inputs.bind('collideToggle', 'KeyC');
     this.inputs.bind('pauseToggle', 'KeyP');
 
-    this.doCollision = false;
+    this.doCollision = true;
     this.paused = false;
 
     this.mousePos = vec2.create(0.0, 0.0);

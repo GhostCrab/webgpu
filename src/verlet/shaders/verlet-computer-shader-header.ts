@@ -16,6 +16,14 @@ export function computeShaderHeader(objectCount: number, binCount: number) {
     colorAndRadius: vec4<f32>,
     collisionOffset: vec4<f32>
   }
+
+  struct VerletObjectCollide {
+    pos: vec4<f32>,
+    prevPos: vec4<f32>,
+    accel: vec4<f32>,
+    colorAndRadius: vec4<f32>,
+    collisionOffset: array<atomic<u32>, 4>,
+  }
   
   struct BinParams {
     size: i32,
