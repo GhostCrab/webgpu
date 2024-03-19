@@ -263,6 +263,11 @@ export default class Renderer {
 
       this.renderStats.updateFPS((now - this.lastFrameMS) / 1000, this.overlayElement);
 
+      // Framerate Protection - if fps drops below 10, turn off collisions
+      if (1 / ((now - this.lastFrameMS) / 1000) < 10) {
+        this.doCollision = false;
+      }
+
       let clickPointX = 0;
       let clickPointY = 0;
       if (this.clickState) {
