@@ -382,7 +382,7 @@ export class VerletBinComputer {
     // END BINNING
   }
 
-  async compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup) {
+  async compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
     const voWorkgroupCount = Math.ceil(this.objectCount / 64);
     const binWorkgroupCount = Math.ceil(this.binParams[3] / 64);
 
@@ -392,27 +392,31 @@ export class VerletBinComputer {
     passEncoder.setBindGroup(2, this.storageBindGroup);
 
     // binning
-    passEncoder.setPipeline(this.binClearPipeline);
-    passEncoder.dispatchWorkgroups(binWorkgroupCount);
+    if (doCollision) {
+      passEncoder.setPipeline(this.binClearPipeline);
+      passEncoder.dispatchWorkgroups(binWorkgroupCount);
 
-    passEncoder.setPipeline(this.binSumPipeline);
-    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+      passEncoder.setPipeline(this.binSumPipeline);
+      passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
-    passEncoder.setPipeline(this.binPrefixSumPipeline);
-    passEncoder.dispatchWorkgroups(Math.ceil(this.binParams[3] / 16), Math.ceil(this.binParams[3] / 16));
+      passEncoder.setPipeline(this.binPrefixSumPipeline);
+      passEncoder.dispatchWorkgroups(Math.ceil(this.binParams[3] / 16), Math.ceil(this.binParams[3] / 16));
 
-    passEncoder.setPipeline(this.binIndexTrackPipeline);
-    passEncoder.dispatchWorkgroups(binWorkgroupCount);
+      passEncoder.setPipeline(this.binIndexTrackPipeline);
+      passEncoder.dispatchWorkgroups(binWorkgroupCount);
 
-    passEncoder.setPipeline(this.binReindexPipeline);
-    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+      passEncoder.setPipeline(this.binReindexPipeline);
+      passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    }
 
     // verlet integration
     passEncoder.setPipeline(this.applyForcesPipeline);
     passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
-    passEncoder.setPipeline(this.collidePipeline);
-    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    if (doCollision) {
+      passEncoder.setPipeline(this.collidePipeline);
+      passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    }
 
     passEncoder.setPipeline(this.constrainPipeline);
     passEncoder.dispatchWorkgroups(voWorkgroupCount);

@@ -40,8 +40,17 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     // calculate the reflect vector
     var newVelo = reflect(oldVelo, reflectNormal);
     pos = constrainPos + (newVelo * bounceVecLen);
-    prevPos = pos - (newVelo * 0.8);
+    prevPos = pos - (newVelo * .8);
   }
+
+  // if (dist > constrainRadius - radius) {
+  //   var n = v / dist;
+  //   pos = constrainCenter - (n * (constrainRadius - radius));
+
+  //   var prevVec = prevPos - pos;
+  //   prevVec *= 0.95;
+  //   prevPos = pos + prevVec;
+  // }
 
   verletObjects[voIndex].pos = vec4<f32>(pos.xy, 0, 0);
   verletObjects[voIndex].prevPos = vec4<f32>(prevPos.xy, 0, 0);

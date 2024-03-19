@@ -1,4 +1,6 @@
-import { mat4 } from 'wgpu-matrix';
+import { GameInputs } from 'game-inputs'
+
+import { mat4, vec2, Vec2 } from 'wgpu-matrix';
 
 import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
@@ -11,12 +13,13 @@ const simParams = new Float32Array(simParamsArrayLength);
 
 const doGPUCompute = true;
 
-export const stepCount = 8;
+export const stepCount = 4;
 
 let mvp = mat4.identity();
 
 export default class Renderer {
   canvas: HTMLCanvasElement;
+  inputs: GameInputs;
 
   // ⚙️ API Data Structures
   adapter: GPUAdapter;
@@ -42,6 +45,10 @@ export default class Renderer {
   running = true;
   devicePixelRatio: number;
   renderStats: RenderStats = new RenderStats();
+  mousePos: Vec2;
+  clickState: boolean;
+  doCollision: boolean;
+  paused: boolean;
 
   verlet: Verlet;
 
@@ -53,6 +60,36 @@ export default class Renderer {
     this.canvas.height = this.canvas.clientHeight * window.devicePixelRatio;
 
     this.overlayElement = document.getElementById('overlay');
+
+    this.inputs = new GameInputs(undefined, {
+      preventDefaults: false, 
+      allowContextMenu: false,
+      stopPropagation: false,
+      disabled: false
+    });
+
+    this.inputs.bind('LMB', 'Mouse1');
+    this.inputs.bind('reset', 'KeyR');
+    this.inputs.bind('collideToggle', 'KeyC');
+    this.inputs.bind('pauseToggle', 'KeyP');
+
+    this.doCollision = false;
+    this.paused = false;
+
+    this.mousePos = vec2.create(0.0, 0.0);
+    this.clickState = false;
+
+    document.onmousemove = (event: MouseEvent) => {
+      this.mousePos = vec2.create((event.pageX - (this.canvas.width) / 2), event.pageY - (this.canvas.height / 2));
+    }
+
+    this.inputs.down.on('LMB', (ev: any) => this.clickState = true);
+    this.inputs.up.on('LMB', (ev: any) => this.clickState = false);
+
+    this.inputs.down.on('collideToggle', (ev: any) => this.doCollision = !this.doCollision);
+    this.inputs.down.on('pauseToggle', (ev: any) => this.paused = !this.paused);
+
+    this.inputs.down.on('reset', (ev: any) => this.verlet.reset(this.device));
   }
 
   // 🏎️ Start the rendering engine
@@ -226,21 +263,23 @@ export default class Renderer {
 
       this.renderStats.updateFPS((now - this.lastFrameMS) / 1000, this.overlayElement);
 
-      let clickPointX = 0.1;
-      let clickPointY = 0.1;
-      // if (input.analog.right) {
-      //   clickPointX = (input.analog.clickX * devicePixelRatio) - (canvas.width / 2);
-      //   clickPointY = (input.analog.clickY * devicePixelRatio) - (canvas.height / 2);
-      // }
+      let clickPointX = 0;
+      let clickPointY = 0;
+      if (this.clickState) {
+        clickPointX = this.mousePos[0];
+        clickPointY = this.mousePos[1];
+      }
 
       let commandEncoder = this.device.createCommandEncoder();
 
       this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
-      for (let i = 0; i < stepCount; i++) {
-        if (doGPUCompute) {
-          await this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup);
-        } else {
-          this.verlet.computeCPU(this.device, simParams);
+      if (!this.paused) {
+        for (let i = 0; i < stepCount; i++) {
+          if (doGPUCompute) {
+            await this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup, this.doCollision);
+          } else {
+            this.verlet.computeCPU(this.device, simParams);
+          }
         }
       }
       
@@ -265,8 +304,9 @@ export default class Renderer {
       this.lastFrameMS = now;
       
       // vsync
-      // await this.sleep();
-      await this.queue.onSubmittedWorkDone();
+      this.inputs.tick();
+      await this.sleep();
+      // await this.queue.onSubmittedWorkDone();
     } while (this.running);
   }
 

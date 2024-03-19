@@ -44,8 +44,8 @@ export class Verlet {
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectRadius = 3;
-    this.objectCount = 10000;
+    this.objectRadius = .6;
+    this.objectCount = 500000;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,    16, 17, 18, 19,          
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
     this.dataNumFloats = 20;
@@ -59,8 +59,8 @@ export class Verlet {
       this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
       this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
   
-      // const rgb = HSVtoRGB( Math.random(), lerp(0.2, 0.9, Math.random()), 1);
-      const rgb = HSVtoRGB( Math.random(), 1, 1);
+      const rgb = HSVtoRGB( 0, lerp(0.6, 0.9, Math.random()), 1);
+      // const rgb = HSVtoRGB( Math.random(), 1, 1);
   
       this.dataArray[i+12] = rgb.r;
       this.dataArray[i+13] = rgb.g;
@@ -92,12 +92,35 @@ export class Verlet {
     this.renderer.render(passEncoder, this.buffer, this.objectCount);
   }
 
-  async compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup) {
-    this.computer.compute(device, commandEncoder, globalUniformBindGroup);
+  async compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
+    this.computer.compute(device, commandEncoder, globalUniformBindGroup, doCollision);
   }
 
   computeCPU(device: GPUDevice, simParams: Float32Array) {
     this.computer.computeCPU(this, simParams);
+
+    device.queue.writeBuffer(this.buffer, 0, this.dataArray);
+  }
+
+  reset(device: GPUDevice) {
+    for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
+      const xpos = (Math.random() * this.bounds)  - (this.bounds / 2);
+      const ypos = (Math.random() * this.bounds) - (this.bounds / 2);
+      this.dataArray[i] = xpos;
+      this.dataArray[i+1] = ypos;
+      this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
+      this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
+  
+      const rgb = HSVtoRGB( 0, lerp(0.6, 0.9, Math.random()), 1);
+      // const rgb = HSVtoRGB( Math.random(), 1, 1);
+  
+      this.dataArray[i+12] = rgb.r;
+      this.dataArray[i+13] = rgb.g;
+      this.dataArray[i+14] = rgb.b;
+  
+      this.dataArray[i+15] = this.objectRadius;
+      i += this.dataNumFloats;
+    }
 
     device.queue.writeBuffer(this.buffer, 0, this.dataArray);
   }
