@@ -49,6 +49,7 @@ export default class Renderer {
   clickForce: number;
   doCollision: boolean;
   paused: boolean;
+  clickLock: boolean;
 
   verlet: Verlet;
 
@@ -73,6 +74,7 @@ export default class Renderer {
     this.inputs.bind('reset', 'KeyR');
     this.inputs.bind('collideToggle', 'KeyC');
     this.inputs.bind('pauseToggle', 'KeyP');
+    this.inputs.bind('clickLockToggle', 'KeyL');
 
     this.doCollision = true;
     this.paused = false;
@@ -81,6 +83,7 @@ export default class Renderer {
     this.rightClickState = false;
     this.leftClickState = false;
     this.clickForce = 0;
+    this.clickLock = false;
 
     document.onmousemove = (event: MouseEvent) => {
       this.mousePos = vec2.create(
@@ -117,6 +120,7 @@ export default class Renderer {
 
     this.inputs.down.on('collideToggle', (ev: any) => this.doCollision = !this.doCollision);
     this.inputs.down.on('pauseToggle', (ev: any) => this.paused = !this.paused);
+    this.inputs.down.on('clickLockToggle', (ev: any) => this.clickLock = !this.clickLock);
 
     this.inputs.down.on('reset', (ev: any) => this.verlet.reset(this.device));
   }
@@ -276,6 +280,7 @@ export default class Renderer {
     simParams[10] = clickForce;
     this.device.queue.writeBuffer(this.simParamsBuffer, 0, simParams);
   }
+  
 
   async render() {
     let frame = 0;
@@ -283,6 +288,11 @@ export default class Renderer {
     // this.lastFrameMS = performance.timeOrigin + performance.now();
     this.startFrameMS = Date.now();
     this.lastFrameMS = Date.now();
+
+    let clickPointX = 0;
+    let clickPointY = 0;
+    let clickForce = 0;
+
     do {
       // const now = performance.timeOrigin + performance.now();
       // const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
@@ -299,13 +309,15 @@ export default class Renderer {
       //   this.doCollision = false;
       // }
 
-      let clickPointX = 0;
-      let clickPointY = 0;
-      let clickForce = 0;
+
       if (this.leftClickState || this.rightClickState) {
         clickPointX = this.mousePos[0];
         clickPointY = this.mousePos[1];
         clickForce = this.clickForce;
+      } else if (!this.clickLock) {
+        clickPointX = 0;
+        clickPointY = 0;
+        clickForce = 0;
       }
 
       let commandEncoder = this.device.createCommandEncoder();

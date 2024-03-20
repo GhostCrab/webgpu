@@ -28,8 +28,8 @@ function HSVtoRGB(h: number, s: number, v: number) {
   return { r, g, b };
 }
 
-export const maxRadius = 3;
-export const minRadius = 1.5;
+export const maxRadius = 2;
+export const minRadius = 0.5;
 
 export class Verlet {
   objectCount: number;
