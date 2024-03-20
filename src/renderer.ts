@@ -44,7 +44,9 @@ export default class Renderer {
   devicePixelRatio: number;
   renderStats: RenderStats = new RenderStats();
   mousePos: Vec2;
-  clickState: boolean;
+  leftClickState: boolean;
+  rightClickState: boolean;
+  clickForce: number;
   doCollision: boolean;
   paused: boolean;
 
@@ -67,6 +69,7 @@ export default class Renderer {
     });
 
     this.inputs.bind('LMB', 'Mouse1');
+    this.inputs.bind('RMB', 'Mouse3');
     this.inputs.bind('reset', 'KeyR');
     this.inputs.bind('collideToggle', 'KeyC');
     this.inputs.bind('pauseToggle', 'KeyP');
@@ -75,7 +78,9 @@ export default class Renderer {
     this.paused = false;
 
     this.mousePos = vec2.create(0.0, 0.0);
-    this.clickState = false;
+    this.rightClickState = false;
+    this.leftClickState = false;
+    this.clickForce = 0;
 
     document.onmousemove = (event: MouseEvent) => {
       this.mousePos = vec2.create(
@@ -84,8 +89,31 @@ export default class Renderer {
       );
     }
 
-    this.inputs.down.on('LMB', (ev: any) => this.clickState = true);
-    this.inputs.up.on('LMB', (ev: any) => this.clickState = false);
+    this.inputs.down.on('LMB', (ev: any) => {
+      this.leftClickState = true
+      this.clickForce = 1000;
+    });
+    this.inputs.up.on('LMB', (ev: any) => {
+      this.leftClickState = false
+      if (!this.rightClickState) {
+        this.clickForce = 0;
+      } else {
+        this.clickForce = -1000;
+      }
+    });
+
+    this.inputs.down.on('RMB', (ev: any) => {
+      this.rightClickState = true
+      this.clickForce = -1000;
+    });
+    this.inputs.up.on('RMB', (ev: any) => {
+      this.rightClickState = false
+      if (!this.leftClickState) {
+        this.clickForce = 0;
+      } else {
+        this.clickForce = 1000;
+      }
+    });
 
     this.inputs.down.on('collideToggle', (ev: any) => this.doCollision = !this.doCollision);
     this.inputs.down.on('pauseToggle', (ev: any) => this.paused = !this.paused);
@@ -238,12 +266,14 @@ export default class Renderer {
     totalTime: number,
     deltaTime: number,
     clickPointX = 0,
-    clickPointY = 0
+    clickPointY = 0,
+    clickForce = 0
   ) {
     simParams[0] = totalTime;
     simParams[1] = deltaTime;
     simParams[8] = clickPointX;
     simParams[9] = clickPointY;
+    simParams[10] = clickForce;
     this.device.queue.writeBuffer(this.simParamsBuffer, 0, simParams);
   }
 
@@ -271,14 +301,16 @@ export default class Renderer {
 
       let clickPointX = 0;
       let clickPointY = 0;
-      if (this.clickState) {
+      let clickForce = 0;
+      if (this.leftClickState || this.rightClickState) {
         clickPointX = this.mousePos[0];
         clickPointY = this.mousePos[1];
+        clickForce = this.clickForce;
       }
 
       let commandEncoder = this.device.createCommandEncoder();
 
-      this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
+      this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY, clickForce);
       if (!this.paused) {
         for (let i = 0; i < stepCount; i++) {
           this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup, this.doCollision);

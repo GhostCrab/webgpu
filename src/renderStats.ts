@@ -9,7 +9,7 @@ export default class RenderStats {
 
     const ema = this.ema6();
     // overlayElement.innerText = `${Math.round((1/ema.pop()) * 100) / 100}`;
-    overlayElement.innerText = `${Math.round(1/ema.pop())}`;
+    overlayElement.innerText = `FPS: ${Math.round(1/ema.pop())}`;
   }
 
   private exponentialAverage(values: number[], lambda: number): number[] {

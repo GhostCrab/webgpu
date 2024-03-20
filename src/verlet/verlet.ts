@@ -28,8 +28,10 @@ function HSVtoRGB(h: number, s: number, v: number) {
   return { r, g, b };
 }
 
+export const maxRadius = 3;
+export const minRadius = 1.5;
+
 export class Verlet {
-  objectRadius: number;
   objectCount: number;
 
   dataNumFloats: number;
@@ -44,7 +46,6 @@ export class Verlet {
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectRadius = 2;
     this.objectCount = 20000;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,    16, 17, 18, 19,          
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
@@ -66,7 +67,7 @@ export class Verlet {
       this.dataArray[i+13] = rgb.g;
       this.dataArray[i+14] = rgb.b;
   
-      this.dataArray[i+15] = this.objectRadius;
+      this.dataArray[i+15] = lerp(minRadius, maxRadius, Math.random());
       i += this.dataNumFloats;
     }
 
@@ -112,7 +113,7 @@ export class Verlet {
       this.dataArray[i+13] = rgb.g;
       this.dataArray[i+14] = rgb.b;
   
-      this.dataArray[i+15] = this.objectRadius;
+      this.dataArray[i+15] = lerp(minRadius, maxRadius, Math.random());
       i += this.dataNumFloats;
     }
 

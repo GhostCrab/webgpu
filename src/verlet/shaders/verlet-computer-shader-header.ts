@@ -1,4 +1,4 @@
-export function computeShaderHeader(objectCount: number, binCount: number) {
+export function computeShaderHeader() {
   return `
   struct Params {
     totalTime: f32,
@@ -36,38 +36,6 @@ export function computeShaderHeader(objectCount: number, binCount: number) {
     x: i32,
     y: i32,
     count: u32,
-  }
-
-  struct BinInfo {
-    bin: array<i32, ${objectCount}>,
-    binSum: array<u32, ${binCount}>,
-    binPrefixSum: array<i32, ${binCount}>,
-    binIndexTracker: array<i32, ${binCount}>,
-    binReindex: array<u32, ${objectCount}>,
-  }
-  
-  struct BinSumInfo {
-    bin: array<i32, ${objectCount}>,
-    binSum: array<atomic<u32>, ${binCount}>,
-    binPrefixSum: array<i32, ${binCount}>,
-    binIndexTracker: array<i32, ${binCount}>,
-    binReindex: array<u32, ${objectCount}>,
-  }
-
-  struct BinPrefixSumInfo {
-    bin: array<i32, ${objectCount}>,
-    binSum: array<u32, ${binCount}>,
-    binPrefixSum: array<atomic<i32>, ${binCount}>,
-    binIndexTracker: array<i32, ${binCount}>,
-    binReindex: array<u32, ${objectCount}>,
-  }
-
-  struct BinReindexInfo {
-    bin: array<i32, ${objectCount}>,
-    binSum: array<u32, ${binCount}>,
-    binPrefixSum: array<i32, ${binCount}>,
-    binIndexTracker: array<atomic<i32>, ${binCount}>,
-    binReindex: array<u32, ${objectCount}>,
   }
 
   @group(0) @binding(1) var<uniform> params: Params;

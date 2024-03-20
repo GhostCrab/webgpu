@@ -47,13 +47,14 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
             var dist = sqrt(dist2);
             var n = v / dist;
 
-            var massRatio = 0.5;
+            var massRatio1 = radius / (radius + otherRadius);
+            var massRatio2 = otherRadius / (radius + otherRadius);
             var responseCoef = 0.65;
             var delta = 0.5 * responseCoef * (dist - minDist);
-            offset -= n * (massRatio * delta);
+            offset -= n * (massRatio2 * delta);
 
             // move other object
-            verletObjects[otherVOIndex].pos = vec4<f32>(verletObjects[otherVOIndex].pos.xy + (n * (massRatio * delta)), 0.0, 0.0);
+            verletObjects[otherVOIndex].pos = vec4<f32>(verletObjects[otherVOIndex].pos.xy + (n * (massRatio1 * delta)), 0.0, 0.0);
           }
         }
       }

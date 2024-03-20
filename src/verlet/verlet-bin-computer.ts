@@ -8,6 +8,7 @@ import integrateShaderCode from './shaders/integrate.wgsl';
 import binClearShaderCode from './shaders/bin-clear.wgsl';
 import binLinkClearShaderCode from './shaders/bin-link-clear.wgsl';
 import binSetShaderCode from './shaders/bin-set.wgsl';
+import { maxRadius } from './verlet';
 
 export class VerletBinComputer {
 
@@ -91,37 +92,37 @@ export class VerletBinComputer {
     this.objectCount = objectCount;
     const gridPixelDim = bounds;
 
-    const binSquareSize = voDataArray[15] * 2;
+    const binSquareSize = maxRadius * 2;
     const binGridWidth = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     const binGridHeight = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
 
     this.binClearShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + binClearShaderCode
+      code: computeShaderHeader() + binClearShaderCode
     });
 
     this.binLinkClearShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + binLinkClearShaderCode
+      code: computeShaderHeader() + binLinkClearShaderCode
     });
 
     this.binSetShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + binSetShaderCode
+      code: computeShaderHeader() + binSetShaderCode
     });
 
     this.applyForcesShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + applyForcesShaderCode
+      code: computeShaderHeader() + applyForcesShaderCode
     });
 
     this.collideShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + collideShaderCode
+      code: computeShaderHeader() + collideShaderCode
     });
 
     this.constrainShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + constrainShaderCode
+      code: computeShaderHeader() + constrainShaderCode
     });
 
     this.integrateShaderModule = device.createShaderModule({
-      code: computeShaderHeader(objectCount, binGridSquareCount) + integrateShaderCode
+      code: computeShaderHeader() + integrateShaderCode
     });
 
     this.binClearPipeline = device.createComputePipeline({
