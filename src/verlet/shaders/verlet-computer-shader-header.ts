@@ -5,6 +5,10 @@ export function computeShaderHeader() {
     deltaTime: f32,
     constrainRadius: f32,
     boxDim: f32,
+    constrainType: u32,
+    unused1: u32,
+    unused2: u32,
+    unused3: u32,
     constrainCenter: vec4<f32>,
     clickPoint: vec4<f32>,
   };

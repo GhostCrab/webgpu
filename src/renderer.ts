@@ -7,8 +7,7 @@ import { RenderPassDescriptor } from './render-pass-descriptor';
 import { Verlet } from './verlet/verlet';
 
 // Simulation Parameters Buffer Data
-// f32 deltaTime, f32 totalTime, f32 constrainRadius, f32 boxDim, vec4<f32> constrainCenter, vec4<f32> clickPoint
-const simParamsArrayLength = 12;
+const simParamsArrayLength = 16;
 const simParams = new Float32Array(simParamsArrayLength);
 
 export const stepCount = 8;
@@ -42,6 +41,7 @@ export default class Renderer {
   // State
   running = true;
   devicePixelRatio: number;
+  constrainRadius: number;
   renderStats: RenderStats = new RenderStats();
   mousePos: Vec2;
   leftClickState: boolean;
@@ -50,6 +50,7 @@ export default class Renderer {
   doCollision: boolean;
   paused: boolean;
   clickLock: boolean;
+  classicConstrain: boolean;
 
   verlet: Verlet;
 
@@ -73,6 +74,7 @@ export default class Renderer {
     this.inputs.bind('RMB', 'Mouse3');
     this.inputs.bind('reset', 'KeyR');
     this.inputs.bind('collideToggle', 'KeyC');
+    this.inputs.bind('classicConstrainToggle', 'KeyT');
     this.inputs.bind('pauseToggle', 'KeyP');
     this.inputs.bind('clickLockToggle', 'KeyL');
 
@@ -84,6 +86,7 @@ export default class Renderer {
     this.leftClickState = false;
     this.clickForce = 0;
     this.clickLock = false;
+    this.classicConstrain = false;
 
     document.onmousemove = (event: MouseEvent) => {
       this.mousePos = vec2.create(
@@ -121,6 +124,7 @@ export default class Renderer {
     this.inputs.down.on('collideToggle', (ev: any) => this.doCollision = !this.doCollision);
     this.inputs.down.on('pauseToggle', (ev: any) => this.paused = !this.paused);
     this.inputs.down.on('clickLockToggle', (ev: any) => this.clickLock = !this.clickLock);
+    this.inputs.down.on('classicConstrainToggle', (ev: any) => this.classicConstrain = !this.classicConstrain);
 
     this.inputs.down.on('reset', (ev: any) => this.verlet.reset(this.device));
   }
@@ -215,19 +219,24 @@ export default class Renderer {
       -1
     );
     this.mvpBuffer = createBuffer(mvp as Float32Array, GPUBufferUsage.UNIFORM);
+    this.constrainRadius = this.canvas.height / 2 - 20;
 
     simParams[0] = 0; // deltaTime
     simParams[1] = 0; // totalTime
-    simParams[2] = this.canvas.height / 2 - 20; // constrainRadius
+    simParams[2] = this.constrainRadius; // constrainRadius
     simParams[3] = this.canvas.height; // boxDim
-    simParams[4] = 0; // constrainCenter.x
-    simParams[5] = 0; // constrainCenter.y
-    simParams[6] = 0; // constrainCenter.z
-    simParams[7] = 0; // constrainCenter.w
-    simParams[8] = 0; // clickPoint.x
-    simParams[9] = 0; // clickPoint.y
-    simParams[10] = 0; // clickPoint.z
-    simParams[11] = 0; // clickPoint.w
+    simParams.set([0x00000000], 4); // u32 constrainType
+    simParams[5] = 0;
+    simParams[6] = 0;
+    simParams[7] = 0;
+    simParams[8] = 0; // constrainCenter.x
+    simParams[9] = 0; // constrainCenter.y
+    simParams[10] = 0; // constrainCenter.z
+    simParams[11] = 0; // constrainCenter.w
+    simParams[12] = 0; // clickPoint.x
+    simParams[13] = 0; // clickPoint.y
+    simParams[14] = 0; // clickPoint.z
+    simParams[15] = 0; // clickPoint.w
     this.simParamsBuffer = createBuffer(
       simParams,
       GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -275,9 +284,16 @@ export default class Renderer {
   ) {
     simParams[0] = totalTime;
     simParams[1] = deltaTime;
-    simParams[8] = clickPointX;
-    simParams[9] = clickPointY;
-    simParams[10] = clickForce;
+    simParams[12] = clickPointX;
+    simParams[13] = clickPointY;
+    simParams[14] = clickForce;
+
+    if (this.classicConstrain) {
+      simParams.set([0x00000000], 4);
+    } else {
+      simParams.set([0x00000001], 4);
+    }
+
     this.device.queue.writeBuffer(this.simParamsBuffer, 0, simParams);
   }
   
@@ -302,7 +318,7 @@ export default class Renderer {
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
       const totalTime = (now - this.startFrameMS) / 1000;
 
-      this.renderStats.updateFPS((now - this.lastFrameMS) / 1000, this.overlayElement);
+      this.renderStats.updateOverlay((now - this.lastFrameMS) / 1000, this);
 
       // Framerate Protection - if fps drops below 10, turn off collisions
       // if (1 / ((now - this.lastFrameMS) / 1000) < 10) {

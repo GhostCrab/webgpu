@@ -8,7 +8,6 @@ import integrateShaderCode from './shaders/integrate.wgsl';
 import binClearShaderCode from './shaders/bin-clear.wgsl';
 import binLinkClearShaderCode from './shaders/bin-link-clear.wgsl';
 import binSetShaderCode from './shaders/bin-set.wgsl';
-import { maxRadius } from './verlet';
 
 export class VerletBinComputer {
 
@@ -38,6 +37,12 @@ export class VerletBinComputer {
   passDescriptor: GPUComputePassDescriptor;
 
   // buffer data
+  gridPixelDim: number;
+  binSquareSize: number;
+  binGridWidth: number;
+  binGridHeight: number;
+  binGridSquareCount: number;
+
   objectCount: number;
 
   binParams: Uint32Array;
@@ -51,7 +56,7 @@ export class VerletBinComputer {
   uniformBindGroup: GPUBindGroup;
   storageBindGroup: GPUBindGroup;
 
-  constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice, objectCount: number) {
+  constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.uniformBindGroupLayout = device.createBindGroupLayout({
       entries: [{
         binding: 0, // binParams
@@ -86,16 +91,15 @@ export class VerletBinComputer {
   initBuffers(device: GPUDevice,
               bounds: number,
               objectCount: number,
-              voDataArray: Float32Array,
-              voDataArrayStride: number,
+              objectSize: number,
               voBuffer: GPUBuffer) {
     this.objectCount = objectCount;
-    const gridPixelDim = bounds;
+    this.gridPixelDim = bounds;
 
-    const binSquareSize = maxRadius * 2;
-    const binGridWidth = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
-    const binGridHeight = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
-    const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
+    this.binSquareSize = objectSize * 2;
+    this.binGridWidth = Math.ceil((this.gridPixelDim / this.binSquareSize) / 2) * 2;
+    this.binGridHeight = Math.ceil((this.gridPixelDim / this.binSquareSize) / 2) * 2;
+    this.binGridSquareCount = Math.ceil((this.binGridWidth * this.binGridHeight) / 4) * 4;
 
     this.binClearShaderModule = device.createShaderModule({
       code: computeShaderHeader() + binClearShaderCode
@@ -182,10 +186,10 @@ export class VerletBinComputer {
     });
     
     this.binParams = new Uint32Array([
-      binSquareSize,     // bin square size
-      binGridWidth,      // grid width
-      binGridHeight,     // grid height
-      binGridSquareCount // number of grid squares
+      this.binSquareSize,     // bin square size
+      this.binGridWidth,      // grid width
+      this.binGridHeight,     // grid height
+      this.binGridSquareCount // number of grid squares
     ]);
 
     this.binParamsBuffer = device.createBuffer({
@@ -197,7 +201,7 @@ export class VerletBinComputer {
     this.binParamsBuffer.unmap();
 
     // binData: Int32Array
-    this.binData = new Int32Array(binGridSquareCount);
+    this.binData = new Int32Array(this.binGridSquareCount);
     this.binBuffer = device.createBuffer({
       size: this.binData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -230,7 +234,7 @@ export class VerletBinComputer {
 
   compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
     const voWorkgroupCount = Math.ceil(this.objectCount / 64);
-    const binWorkgroupCount = Math.ceil(this.binParams[3] / 64);
+    const binWorkgroupCount = Math.ceil(this.binGridSquareCount / 64);
 
     let passEncoder = commandEncoder.beginComputePass();
     passEncoder.setBindGroup(0, globalUniformBindGroup);

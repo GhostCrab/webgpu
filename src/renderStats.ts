@@ -1,15 +1,25 @@
+import Renderer from "./renderer";
+
 export default class RenderStats {
   private frameTimes: number[] = [];
 
   private lambda6 = 0.5720236015483775;
-  updateFPS(frameTime: number, overlayElement: HTMLElement) {
+  updateOverlay(frameTime: number, renderer: Renderer) {
     this.frameTimes.push(frameTime);
     if (this.frameTimes.length >= 20)
       this.frameTimes.shift();
 
     const ema = this.ema6();
     // overlayElement.innerText = `${Math.round((1/ema.pop()) * 100) / 100}`;
-    overlayElement.innerText = `FPS: ${Math.round(1/ema.pop())}`;
+    renderer.overlayElement.innerText = 
+      `FPS: ${Math.round(1/ema.pop())}\n` +
+      `Objects: ${renderer.verlet.objectCount}\n` +
+      `Bins: ${renderer.verlet.computer.binGridSquareCount}\n` +
+      `Object Size: ${renderer.verlet.minRadius * 2} - ${renderer.verlet.maxRadius * 2}\n` +
+      `Bounds Size: ${renderer.constrainRadius * 2}\n` +
+      `Collision: ${renderer.doCollision}\n` +
+      `Constrain: ${renderer.classicConstrain ? "Classic" : "Reflect"}\n` +
+      `ClickForce: ${renderer.clickLock ? 'LOCKED' : renderer.clickForce}`;
   }
 
   private exponentialAverage(values: number[], lambda: number): number[] {

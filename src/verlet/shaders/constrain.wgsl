@@ -17,35 +17,36 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
 
   var v = constrainCenter - pos;
   var dist = length(v);
-  // if (dist > constrainRadius - radius) {
-  //   var n = v / dist;
-  //   var constrainPos = constrainCenter - (n * (constrainRadius - radius));
-
-  //   var prevVec = prevPos - pos;
-  //   var prevVecLen = length(prevVec);
-
-  //   var constrainVec = prevPos - constrainPos;
-  //   var constrainVecLen = length(constrainVec);
-
-  //   // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
-  //   var bounceVecLen = constrainVecLen - prevVecLen;
-
-  //   var reflectNormal = normalize(vec2f(-pos.xy));
-  //   var oldVelo = pos - prevPos;
-
-  //   // calculate the reflect vector
-  //   var newVelo = reflect(oldVelo, reflectNormal);
-  //   pos = constrainPos + (newVelo * bounceVecLen);
-  //   prevPos = pos - (newVelo * .8);
-  // }
 
   if (dist > constrainRadius - radius) {
-    var n = v / dist;
-    pos = constrainCenter - (n * (constrainRadius - radius));
+    if (params.constrainType == 0) {
+      var n = v / dist;
+      pos = constrainCenter - (n * (constrainRadius - radius));
 
-    var prevVec = prevPos - pos;
-    prevVec *= 0.95;
-    prevPos = pos + prevVec;
+      var prevVec = prevPos - pos;
+      prevVec *= 0.95;
+      prevPos = pos + prevVec;
+    } else {
+      var n = v / dist;
+      var constrainPos = constrainCenter - (n * (constrainRadius - radius));
+
+      var prevVec = prevPos - pos;
+      var prevVecLen = length(prevVec);
+
+      var constrainVec = prevPos - constrainPos;
+      var constrainVecLen = length(constrainVec);
+
+      // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
+      var bounceVecLen = constrainVecLen - prevVecLen;
+
+      var reflectNormal = normalize(vec2f(-pos.xy));
+      var oldVelo = pos - prevPos;
+
+      // calculate the reflect vector
+      var newVelo = reflect(oldVelo, reflectNormal);
+      pos = constrainPos + (newVelo * bounceVecLen);
+      prevPos = pos - (newVelo * .8);
+    }
   }
 
   verletObjects[voIndex].pos = vec4<f32>(pos.xy, 0, 0);
