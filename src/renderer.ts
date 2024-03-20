@@ -11,8 +11,6 @@ import { Verlet } from './verlet/verlet';
 const simParamsArrayLength = 12;
 const simParams = new Float32Array(simParamsArrayLength);
 
-const doGPUCompute = true;
-
 export const stepCount = 8;
 
 let mvp = mat4.identity();
@@ -80,7 +78,10 @@ export default class Renderer {
     this.clickState = false;
 
     document.onmousemove = (event: MouseEvent) => {
-      this.mousePos = vec2.create((event.pageX - (this.canvas.width) / 2), event.pageY - (this.canvas.height / 2));
+      this.mousePos = vec2.create(
+         (event.pageX * window.devicePixelRatio) - (this.canvas.width / 2), 
+         (event.pageY * window.devicePixelRatio) - (this.canvas.height / 2)
+      );
     }
 
     this.inputs.down.on('LMB', (ev: any) => this.clickState = true);
@@ -264,9 +265,9 @@ export default class Renderer {
       this.renderStats.updateFPS((now - this.lastFrameMS) / 1000, this.overlayElement);
 
       // Framerate Protection - if fps drops below 10, turn off collisions
-      if (1 / ((now - this.lastFrameMS) / 1000) < 10) {
-        this.doCollision = false;
-      }
+      // if (1 / ((now - this.lastFrameMS) / 1000) < 10) {
+      //   this.doCollision = false;
+      // }
 
       let clickPointX = 0;
       let clickPointY = 0;
@@ -280,11 +281,7 @@ export default class Renderer {
       this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY);
       if (!this.paused) {
         for (let i = 0; i < stepCount; i++) {
-          if (doGPUCompute) {
-            await this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup, this.doCollision);
-          } else {
-            this.verlet.computeCPU(this.device, simParams);
-          }
+          this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup, this.doCollision);
         }
       }
       

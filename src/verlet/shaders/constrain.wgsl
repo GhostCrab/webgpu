@@ -14,10 +14,6 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var pos = verletObjects[voIndex].pos.xy;
   var prevPos = verletObjects[voIndex].prevPos.xy;
   var radius = verletObjects[voIndex].colorAndRadius.w;
-  var offset = verletObjects[voIndex].collisionOffset.xy;
-
-  pos += offset;
-  verletObjects[voIndex].collisionOffset = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
   var v = constrainCenter - pos;
   var dist = length(v);

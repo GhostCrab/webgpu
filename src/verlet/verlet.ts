@@ -44,8 +44,8 @@ export class Verlet {
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectRadius = 1;
-    this.objectCount = 20000;
+    this.objectRadius = 3;
+    this.objectCount = 5000;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,    16, 17, 18, 19,          
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
     this.dataNumFloats = 20;
@@ -92,14 +92,8 @@ export class Verlet {
     this.renderer.render(passEncoder, this.buffer, this.objectCount);
   }
 
-  async compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
+  compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
     this.computer.compute(device, commandEncoder, globalUniformBindGroup, doCollision);
-  }
-
-  computeCPU(device: GPUDevice, simParams: Float32Array) {
-    this.computer.computeCPU(this, simParams);
-
-    device.queue.writeBuffer(this.buffer, 0, this.dataArray);
   }
 
   reset(device: GPUDevice) {

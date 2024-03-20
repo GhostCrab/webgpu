@@ -1,4 +1,4 @@
-@group(2) @binding(1) var<storage, read_write> binInfo: BinInfo;
+@group(2) @binding(1) var<storage, read_write> bins: array<i32>;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
@@ -8,6 +8,5 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     return;
   }
 
-  binInfo.binSum[binIndex] = 0u;
-  binInfo.binPrefixSum[binIndex] = 0;
+  bins[binIndex] = -1;
 }
