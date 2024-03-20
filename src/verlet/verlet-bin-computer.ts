@@ -1,11 +1,7 @@
-import { vec2 } from 'wgpu-matrix';
-
-import { Verlet } from './verlet';
-
 import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
 
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
-import collideShaderCode from './shaders/bin-collide-3.wgsl';
+import collideShaderCode from './shaders/collide.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 
@@ -99,19 +95,6 @@ export class VerletBinComputer {
     const binGridWidth = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     const binGridHeight = Math.ceil((gridPixelDim / binSquareSize) / 2) * 2;
     const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
-
-    // const binGridWidth = 32;
-    // const binGridHeight = 32;
-    // const binSquareSize = Math.ceil(gridPixelDim / 32);
-    // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
-    
-    // const binResolution = 64;
-    // const binGridWidth = binResolution;
-    // const binGridHeight = binResolution;
-    // const binSquareSize = Math.ceil(gridPixelDim / binResolution);
-    // const binGridSquareCount = Math.ceil((binGridWidth * binGridHeight) / 4) * 4;
-    
-    console.log(`gridPixelDim:${gridPixelDim}, binGridWidth:${binGridWidth}, binSquareSize:${binSquareSize}, binGridSquareCount: ${binGridSquareCount}`);
 
     this.binClearShaderModule = device.createShaderModule({
       code: computeShaderHeader(objectCount, binGridSquareCount) + binClearShaderCode
@@ -271,7 +254,7 @@ export class VerletBinComputer {
 
     if (doCollision) {
       passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(voWorkgroupCount);
+      passEncoder.dispatchWorkgroups(binWorkgroupCount);
     }
 
     passEncoder.setPipeline(this.constrainPipeline);
