@@ -10,7 +10,8 @@ import { Verlet } from './verlet/verlet';
 const simParamsArrayLength = 16;
 const simParams = new Float32Array(simParamsArrayLength);
 
-export const stepCount = 8;
+export const stepCount = 24;
+const impulse = 5000;
 
 let mvp = mat4.identity();
 
@@ -30,6 +31,7 @@ export default class Renderer {
   // 🔺 Resources
   mvpBuffer: GPUBuffer;
   simParamsBuffer: GPUBuffer;
+  uniformBindGroupLayout: GPUBindGroupLayout;
   uniformBindGroup: GPUBindGroup;
   pipeline: GPURenderPipeline;
 
@@ -97,27 +99,27 @@ export default class Renderer {
 
     this.inputs.down.on('LMB', (ev: any) => {
       this.leftClickState = true
-      this.clickForce = 1000;
+      this.clickForce = impulse;
     });
     this.inputs.up.on('LMB', (ev: any) => {
       this.leftClickState = false
       if (!this.rightClickState) {
         this.clickForce = 0;
       } else {
-        this.clickForce = -1000;
+        this.clickForce = -impulse;
       }
     });
 
     this.inputs.down.on('RMB', (ev: any) => {
       this.rightClickState = true
-      this.clickForce = -1000;
+      this.clickForce = -impulse;
     });
     this.inputs.up.on('RMB', (ev: any) => {
       this.rightClickState = false
       if (!this.leftClickState) {
         this.clickForce = 0;
       } else {
-        this.clickForce = 1000;
+        this.clickForce = impulse;
       }
     });
 
@@ -196,7 +198,7 @@ export default class Renderer {
     this.renderPassDesc = new RenderPassDescriptor(this.device, this.canvas);
 
     // 🦄 Uniform Data
-    const globalUniformBindGroupLayout = this.device.createBindGroupLayout({
+    this.uniformBindGroupLayout = this.device.createBindGroupLayout({
       label: 'renderBindGroupLayout',
       entries: [{
           binding: 0, // mvp
@@ -243,7 +245,7 @@ export default class Renderer {
     );
 
     this.uniformBindGroup = this.device.createBindGroup({
-      layout: globalUniformBindGroupLayout,
+      layout: this.uniformBindGroupLayout,
       entries: [{
         binding: 0,
         resource: { buffer: this.mvpBuffer }
@@ -255,7 +257,7 @@ export default class Renderer {
 
     console.log(this.canvas);
 
-    this.verlet = new Verlet(this.canvas.height, globalUniformBindGroupLayout, this.device);
+    this.verlet = new Verlet(this.canvas.height, this.uniformBindGroupLayout, this.device);
   }
 
   // ↙️ Resize swapchain, frame buffer attachments

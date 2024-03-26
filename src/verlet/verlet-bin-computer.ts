@@ -186,10 +186,12 @@ export class VerletBinComputer {
     });
     
     this.binParams = new Uint32Array([
-      this.binSquareSize,     // bin square size
-      this.binGridWidth,      // grid width
-      this.binGridHeight,     // grid height
-      this.binGridSquareCount // number of grid squares
+      this.binSquareSize,      // bin square size
+      this.binGridWidth,       // grid width
+      this.binGridHeight,      // grid height
+      this.binGridSquareCount, // number of grid squares
+      0,                       // bin start offset
+      0,                       // bin stride
     ]);
 
     this.binParamsBuffer = device.createBuffer({
@@ -230,6 +232,12 @@ export class VerletBinComputer {
         }
       ],
     });
+  }
+
+  updateBinParams(device: GPUDevice, offset: number, stride: number) {
+    this.binParams[4] = offset;
+    this.binParams[5] = stride;
+    device.queue.writeBuffer(this.binParamsBuffer, 0, this.binParams);
   }
 
   compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {

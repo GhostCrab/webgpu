@@ -40,8 +40,8 @@ export class Verlet {
   bounds: number;
   buffer: GPUBuffer;
   
-  maxRadius = 2;
-  minRadius = 0.5;
+  maxRadius = 3;
+  minRadius = 3;
 
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
@@ -51,6 +51,15 @@ export class Verlet {
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
     this.dataNumFloats = 20;
     this.dataArray = new Float32Array(this.dataNumFloats * this.objectCount);
+
+    let hue = Math.random();
+    let lerpStart = Math.random();
+    let lerpEnd = Math.random();
+    if (lerpEnd < lerpStart) {
+      let temp = lerpEnd;
+      lerpEnd = lerpStart;
+      lerpStart = temp;
+    }
   
     for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
       const xpos = (Math.random() * bounds)  - (bounds / 2);
@@ -60,7 +69,7 @@ export class Verlet {
       this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
       this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
   
-      const rgb = HSVtoRGB( 0, lerp(0.6, 0.9, Math.random()), 1);
+      const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
       // const rgb = HSVtoRGB( Math.random(), 1, 1);
   
       this.dataArray[i+12] = rgb.r;
@@ -98,6 +107,15 @@ export class Verlet {
   }
 
   reset(device: GPUDevice) {
+    let hue = Math.random();
+    let lerpStart = Math.random();
+    let lerpEnd = Math.random();
+    if (lerpEnd < lerpStart) {
+      let temp = lerpEnd;
+      lerpEnd = lerpStart;
+      lerpStart = temp;
+    }
+
     for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
       const xpos = (Math.random() * this.bounds)  - (this.bounds / 2);
       const ypos = (Math.random() * this.bounds) - (this.bounds / 2);
@@ -106,14 +124,14 @@ export class Verlet {
       this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
       this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
   
-      const rgb = HSVtoRGB( 0, lerp(0.6, 0.9, Math.random()), 1);
+      const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
       // const rgb = HSVtoRGB( Math.random(), 1, 1);
   
       this.dataArray[i+12] = rgb.r;
       this.dataArray[i+13] = rgb.g;
       this.dataArray[i+14] = rgb.b;
   
-      this.dataArray[i+15] = lerp(minRadius, maxRadius, Math.random());
+      this.dataArray[i+15] = lerp(this.minRadius, this.maxRadius, Math.random());
       i += this.dataNumFloats;
     }
 
