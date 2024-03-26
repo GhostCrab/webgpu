@@ -21,8 +21,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     var posDiffNorm = posDiff / mag;
     accel = posDiffNorm * params.clickPoint.z * radius;
   } else {
-    accel += vec2<f32>(0.0, 800.0 * radius);
+    accel += vec2<f32>(0.0, 300.0 * radius);
   }
-
+  
   verletObjects[voIndex].accel = vec4<f32>(accel.xy, 0.0, 0.0);
 }

@@ -11,8 +11,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   
   var pos = verletObjects[voIndex].pos.xy;
 
-  var binx = i32((pos.x + (f32(params.binParams.x) / 2.0)) / f32(binParams.size));
-  var biny = i32((pos.y + (f32(params.binParams.y) / 2.0)) / f32(binParams.size));
+  var binx = i32((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
+  var biny = i32((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
   
   var binIndex = (biny * binParams.x) + binx;
 

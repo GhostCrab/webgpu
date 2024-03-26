@@ -2,6 +2,9 @@ import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
 
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
 import collideShaderCode from './shaders/collide.wgsl';
+import collide2ShaderCode from './shaders/collide2.wgsl';
+import collide3ShaderCode from './shaders/collide3.wgsl';
+import collide4ShaderCode from './shaders/collide4.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 
@@ -17,6 +20,9 @@ export class VerletBinComputer {
 
   applyForcesPipeline: GPUComputePipeline;
   collidePipeline: GPUComputePipeline;
+  collide2Pipeline: GPUComputePipeline;
+  collide3Pipeline: GPUComputePipeline;
+  collide4Pipeline: GPUComputePipeline;
   constrainPipeline: GPUComputePipeline;
   integratePipeline: GPUComputePipeline;
 
@@ -27,6 +33,8 @@ export class VerletBinComputer {
   applyForcesShaderModule: GPUShaderModule;
   collideShaderModule: GPUShaderModule;
   collide2ShaderModule: GPUShaderModule;
+  collide3ShaderModule: GPUShaderModule;
+  collide4ShaderModule: GPUShaderModule;
   constrainShaderModule: GPUShaderModule;
   integrateShaderModule: GPUShaderModule;
 
@@ -121,6 +129,18 @@ export class VerletBinComputer {
       code: computeShaderHeader() + collideShaderCode
     });
 
+    this.collide2ShaderModule = device.createShaderModule({
+      code: computeShaderHeader() + collide2ShaderCode
+    });
+
+    this.collide3ShaderModule = device.createShaderModule({
+      code: computeShaderHeader() + collide3ShaderCode
+    });
+
+    this.collide4ShaderModule = device.createShaderModule({
+      code: computeShaderHeader() + collide4ShaderCode
+    });
+
     this.constrainShaderModule = device.createShaderModule({
       code: computeShaderHeader() + constrainShaderCode
     });
@@ -169,6 +189,30 @@ export class VerletBinComputer {
       },
     });
 
+    this.collide2Pipeline = device.createComputePipeline({
+      layout: this.computePipelineLayout,
+      compute: {
+        module: this.collide2ShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.collide3Pipeline = device.createComputePipeline({
+      layout: this.computePipelineLayout,
+      compute: {
+        module: this.collide3ShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
+    this.collide4Pipeline = device.createComputePipeline({
+      layout: this.computePipelineLayout,
+      compute: {
+        module: this.collide4ShaderModule,
+        entryPoint: 'main',
+      },
+    });
+
     this.constrainPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
@@ -190,8 +234,10 @@ export class VerletBinComputer {
       this.binGridWidth,       // grid width
       this.binGridHeight,      // grid height
       this.binGridSquareCount, // number of grid squares
-      0,                       // bin start offset
-      0,                       // bin stride
+      0,                       // bin X start offset
+      0,                       // bin Y start offset
+      0,
+      0
     ]);
 
     this.binParamsBuffer = device.createBuffer({
@@ -234,15 +280,17 @@ export class VerletBinComputer {
     });
   }
 
-  updateBinParams(device: GPUDevice, offset: number, stride: number) {
-    this.binParams[4] = offset;
-    this.binParams[5] = stride;
+  updateBinParams(device: GPUDevice, xOffset: number, yOffset: number) {
+    this.binParams[4] = xOffset;
+    this.binParams[5] = yOffset;
     device.queue.writeBuffer(this.binParamsBuffer, 0, this.binParams);
   }
 
   compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
     const voWorkgroupCount = Math.ceil(this.objectCount / 64);
     const binWorkgroupCount = Math.ceil(this.binGridSquareCount / 64);
+    const binSubXWorkgroupCount = Math.ceil((this.binGridWidth / 2) / 16);
+    const binSubYWorkgroupCount = Math.ceil((this.binGridHeight / 2) / 16);
 
     let passEncoder = commandEncoder.beginComputePass();
     passEncoder.setBindGroup(0, globalUniformBindGroup);
@@ -267,7 +315,16 @@ export class VerletBinComputer {
 
     if (doCollision) {
       passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(binWorkgroupCount);
+      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
+
+      passEncoder.setPipeline(this.collide2Pipeline);
+      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
+
+      passEncoder.setPipeline(this.collide3Pipeline);
+      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
+
+      passEncoder.setPipeline(this.collide4Pipeline);
+      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
     }
 
     passEncoder.setPipeline(this.constrainPipeline);

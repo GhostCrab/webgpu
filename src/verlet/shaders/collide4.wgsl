@@ -5,8 +5,8 @@
 fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var binStepX = i32(GlobalInvocationID.x);
   var binStepY = i32(GlobalInvocationID.y);
-  var binX = (binStepX * 2);
-  var binY = (binStepY * 2);
+  var binX = (binStepX * 2) + 1;
+  var binY = (binStepY * 2) + 1;
 
   if (binX >= binParams.x || binY >= binParams.y) {
     return;
