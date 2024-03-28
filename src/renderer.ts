@@ -6,12 +6,15 @@ import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
 import { Verlet } from './verlet/verlet';
 
+import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
+import dimTextureWGSL from './shaders/dimTexture.wgsl';
+
 // Simulation Parameters Buffer Data
 const simParamsArrayLength = 16;
 const simParams = new Float32Array(simParamsArrayLength);
 
 export const stepCount = 8;
-const impulse = 5000;
+const impulse = 1000;
 
 let mvp = mat4.identity();
 
@@ -29,11 +32,17 @@ export default class Renderer {
   renderPassDesc: RenderPassDescriptor;
 
   // 🔺 Resources
+  renderTexture: GPUTexture;
   mvpBuffer: GPUBuffer;
   simParamsBuffer: GPUBuffer;
   uniformBindGroupLayout: GPUBindGroupLayout;
   uniformBindGroup: GPUBindGroup;
-  pipeline: GPURenderPipeline;
+  
+  fullscreenQuadPipeline: GPURenderPipeline;
+  fullscreenQuadBindGroup: GPUBindGroup;
+
+  dimTexturePipeline: GPURenderPipeline;
+  dimTextureBindGroup: GPUBindGroup;
 
   startFrameMS: number;
   lastFrameMS: number;
@@ -197,6 +206,106 @@ export default class Renderer {
     // ⚗️ Graphics Pipeline
     this.renderPassDesc = new RenderPassDescriptor(this.device, this.canvas);
 
+    this.renderTexture = this.device.createTexture({
+      size: [this.canvas.width, this.canvas.height],
+      format: "bgra8unorm",
+      usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+
+    this.fullscreenQuadPipeline = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: {
+        module: this.device.createShaderModule({
+          code: fullscreenTexturedQuadWGSL,
+        }),
+        entryPoint: 'vert_main',
+      },
+      fragment: {
+        module: this.device.createShaderModule({
+          code: fullscreenTexturedQuadWGSL,
+        }),
+        targets: [{
+          format: navigator.gpu.getPreferredCanvasFormat(),
+        }],
+        entryPoint: 'frag_main',
+      },
+      primitive: {
+        topology: 'triangle-list',
+      },
+      depthStencil: {
+        depthWriteEnabled: false,
+        depthCompare: 'less',
+        format: 'depth24plus-stencil8'
+      },
+      multisample: {
+        count: 4
+      }
+    });
+
+    this.dimTexturePipeline = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: {
+        module: this.device.createShaderModule({
+          code: dimTextureWGSL,
+        }),
+        entryPoint: 'vert_main',
+      },
+      fragment: {
+        module: this.device.createShaderModule({
+          code: dimTextureWGSL,
+        }),
+        targets: [{
+          format: navigator.gpu.getPreferredCanvasFormat(),
+        }],
+        entryPoint: 'frag_main',
+      },
+      primitive: {
+        topology: 'triangle-list',
+      },
+      depthStencil: {
+        depthWriteEnabled: false,
+        depthCompare: 'less',
+        format: 'depth24plus-stencil8'
+      },
+      multisample: {
+        count: 4
+      }
+    });
+
+    this.fullscreenQuadBindGroup = this.device.createBindGroup({
+      layout: this.fullscreenQuadPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: this.device.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear',
+          }),
+        },
+        {
+          binding: 1,
+          resource: this.renderTexture.createView(),
+        },
+      ],
+    });
+
+    this.dimTextureBindGroup = this.device.createBindGroup({
+      layout: this.dimTexturePipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: this.device.createSampler({
+            magFilter: 'linear',
+            minFilter: 'linear',
+          }),
+        },
+        {
+          binding: 1,
+          resource: this.renderTexture.createView(),
+        },
+      ],
+    });
+
     // 🦄 Uniform Data
     this.uniformBindGroupLayout = this.device.createBindGroupLayout({
       label: 'renderBindGroupLayout',
@@ -346,20 +455,38 @@ export default class Renderer {
           this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup, this.doCollision);
         }
       }
+
+      {
+        this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView());
+        
+        let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
+        
+        passEncoder.setPipeline(this.dimTexturePipeline);
+        passEncoder.setBindGroup(0, this.dimTextureBindGroup);
+        passEncoder.draw(6);
+        passEncoder.end();
+      }
       
       {
         // ⏭ Acquire next image from context
-        this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView()); 
+        this.renderPassDesc.updateResolveTarget(this.renderTexture.createView()); 
 
         let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
         passEncoder.setBindGroup(0, this.uniformBindGroup);
-        passEncoder.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
-        passEncoder.setScissorRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        this.verlet.render(passEncoder);
-        
+
+        this.verlet.render(passEncoder);        
         passEncoder.end();
-        // await this.queue.onSubmittedWorkDone();
+      }
+
+      {
+        this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView()); 
+        
+        let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
+        
+        passEncoder.setPipeline(this.fullscreenQuadPipeline);
+        passEncoder.setBindGroup(0, this.fullscreenQuadBindGroup);
+        passEncoder.draw(6);
+        passEncoder.end();
       }
 
       this.queue.submit([commandEncoder.finish()]);
