@@ -44,6 +44,7 @@ fn fragment_main(
     @location(1) fragUV : vec2<f32>,
     @location(2) @interpolate(flat) cull : u32
   ) -> @location(0) vec4f {
+  return color;
   if (cull == 1) {discard;};
 
   var recenter = fragUV - 0.5;

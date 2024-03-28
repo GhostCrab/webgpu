@@ -10,7 +10,7 @@ import { Verlet } from './verlet/verlet';
 const simParamsArrayLength = 16;
 const simParams = new Float32Array(simParamsArrayLength);
 
-export const stepCount = 24;
+export const stepCount = 8;
 const impulse = 5000;
 
 let mvp = mat4.identity();

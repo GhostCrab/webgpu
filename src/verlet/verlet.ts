@@ -40,13 +40,13 @@ export class Verlet {
   bounds: number;
   buffer: GPUBuffer;
   
-  maxRadius = 1;
-  minRadius = 1;
+  maxRadius = .5;
+  minRadius = .5;
 
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
-    this.objectCount = 200000;
+    this.objectCount = 1000000;
     // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,    16, 17, 18, 19,          
     // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
     this.dataNumFloats = 20;
