@@ -7,7 +7,6 @@ import { RenderPassDescriptor } from './render-pass-descriptor';
 import { Verlet } from './verlet/verlet';
 
 import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
-import dimTextureWGSL from './shaders/dimTexture.wgsl';
 
 // Simulation Parameters Buffer Data
 const simParamsArrayLength = 16;
@@ -40,9 +39,6 @@ export default class Renderer {
   
   fullscreenQuadPipeline: GPURenderPipeline;
   fullscreenQuadBindGroup: GPUBindGroup;
-
-  dimTexturePipeline: GPURenderPipeline;
-  dimTextureBindGroup: GPUBindGroup;
 
   startFrameMS: number;
   lastFrameMS: number;
@@ -242,55 +238,8 @@ export default class Renderer {
       }
     });
 
-    this.dimTexturePipeline = this.device.createRenderPipeline({
-      layout: 'auto',
-      vertex: {
-        module: this.device.createShaderModule({
-          code: dimTextureWGSL,
-        }),
-        entryPoint: 'vert_main',
-      },
-      fragment: {
-        module: this.device.createShaderModule({
-          code: dimTextureWGSL,
-        }),
-        targets: [{
-          format: navigator.gpu.getPreferredCanvasFormat(),
-        }],
-        entryPoint: 'frag_main',
-      },
-      primitive: {
-        topology: 'triangle-list',
-      },
-      depthStencil: {
-        depthWriteEnabled: false,
-        depthCompare: 'less',
-        format: 'depth24plus-stencil8'
-      },
-      multisample: {
-        count: 4
-      }
-    });
-
     this.fullscreenQuadBindGroup = this.device.createBindGroup({
       layout: this.fullscreenQuadPipeline.getBindGroupLayout(0),
-      entries: [
-        {
-          binding: 0,
-          resource: this.device.createSampler({
-            magFilter: 'linear',
-            minFilter: 'linear',
-          }),
-        },
-        {
-          binding: 1,
-          resource: this.renderTexture.createView(),
-        },
-      ],
-    });
-
-    this.dimTextureBindGroup = this.device.createBindGroup({
-      layout: this.dimTexturePipeline.getBindGroupLayout(0),
       entries: [
         {
           binding: 0,
@@ -456,17 +405,6 @@ export default class Renderer {
         }
       }
 
-      {
-        this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView());
-        
-        let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
-        
-        passEncoder.setPipeline(this.dimTexturePipeline);
-        passEncoder.setBindGroup(0, this.dimTextureBindGroup);
-        passEncoder.draw(6);
-        passEncoder.end();
-      }
-      
       {
         // ⏭ Acquire next image from context
         this.renderPassDesc.updateResolveTarget(this.renderTexture.createView()); 
