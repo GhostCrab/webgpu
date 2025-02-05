@@ -314,15 +314,23 @@ export class VerletBinComputer {
     passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
     if (doCollision) {
+      this.updateBinParams(device, 0, 0);
+      passEncoder.setBindGroup(1, this.uniformBindGroup);
       passEncoder.setPipeline(this.collidePipeline);
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
 
+      // this.updateBinParams(device, 1, 0);
+      passEncoder.setBindGroup(1, this.uniformBindGroup);
       passEncoder.setPipeline(this.collide2Pipeline);
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
 
+      // this.updateBinParams(device, 0, 1);
+      passEncoder.setBindGroup(1, this.uniformBindGroup);
       passEncoder.setPipeline(this.collide3Pipeline);
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
 
+      // this.updateBinParams(device, 1, 1);
+      passEncoder.setBindGroup(1, this.uniformBindGroup);
       passEncoder.setPipeline(this.collide4Pipeline);
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
     }

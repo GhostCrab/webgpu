@@ -5,8 +5,8 @@
 fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var binStepX = i32(GlobalInvocationID.x);
   var binStepY = i32(GlobalInvocationID.y);
-  var binX = (binStepX * 2);
-  var binY = (binStepY * 2);
+  var binX = (binStepX * 2) + binParams.xOffset;
+  var binY = (binStepY * 2) + binParams.yOffset;
 
   if (binX >= binParams.x || binY >= binParams.y) {
     return;
@@ -19,6 +19,9 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     binIndex               - 1, binIndex,               binIndex               + 1,
     binIndex + binParams.x - 1, binIndex + binParams.x, binIndex + binParams.x + 1
   );
+
+  var collisionLimitReached = false;
+  var collidedTestCont = 0;
 
   for (var voIndex = bins[binIndex]; voIndex != -1; voIndex = verletObjects[voIndex].binLink) {
     var pos = verletObjects[voIndex].pos.xy;
@@ -43,6 +46,12 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       for (var otherVOIndex = startOtherIndex; otherVOIndex != -1; otherVOIndex = verletObjects[otherVOIndex].binLink) {
         var otherRadius = verletObjects[otherVOIndex].colorAndRadius.w;
         if (otherVOIndex != voIndex && otherRadius != 0) {
+          collidedTestCont = collidedTestCont + 1;
+          if (collidedTestCont > 1000) {
+            collisionLimitReached = true;
+            break;
+          }
+
           var otherPos = verletObjects[otherVOIndex].pos.xy;
 
           var v = pos - otherPos;
@@ -62,6 +71,10 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
             verletObjects[otherVOIndex].pos = vec4<f32>(verletObjects[otherVOIndex].pos.xy + (n * (massRatio1 * delta)), 0.0, 0.0);
           }
         }
+      }
+
+      if (collisionLimitReached) {
+        break;
       }
     }
 

@@ -49,6 +49,13 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
     }
   }
 
+  // var veloVec = prevPos - pos;
+  // var nextVelo = length(veloVec);
+  // if (nextVelo > .1) {
+  //   veloVec = normalize(veloVec) * .1;
+  //   prevPos = pos - veloVec;
+  // }
+
   verletObjects[voIndex].pos = vec4<f32>(pos.xy, 0, 0);
   verletObjects[voIndex].prevPos = vec4<f32>(prevPos.xy, 0, 0);
 }
