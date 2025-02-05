@@ -46,6 +46,11 @@ export function computeShaderHeader() {
     unused2: u32,
   }
 
+  struct CollisionStepOffset {
+    xOffset: i32,
+    yOffset: i32,
+  }
+
   @group(0) @binding(1) var<uniform> params: Params;
   @group(1) @binding(0) var<uniform> binParams: BinParams;
   `;

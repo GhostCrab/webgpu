@@ -12,7 +12,7 @@ import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
 const simParamsArrayLength = 16;
 const simParams = new Float32Array(simParamsArrayLength);
 
-export const stepCount = 100;
+export const stepCount = 20;
 const impulse = 2000;
 
 let mvp = mat4.identity();

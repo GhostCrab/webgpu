@@ -1,12 +1,13 @@
 @group(2) @binding(0) var<storage, read_write> verletObjects: array<VerletObject>;
 @group(2) @binding(1) var<storage, read_write> bins: array<i32>;
+@group(2) @binding(2) var<storage, read_write> cso: CollisionStepOffset;
 
 @compute @workgroup_size(16,16)
 fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var binStepX = i32(GlobalInvocationID.x);
   var binStepY = i32(GlobalInvocationID.y);
-  var binX = (binStepX * 2) + binParams.xOffset;
-  var binY = (binStepY * 2) + binParams.yOffset;
+  var binX = (binStepX * 2) + cso.xOffset;
+  var binY = (binStepY * 2) + cso.yOffset;
 
   if (binX >= binParams.x || binY >= binParams.y) {
     return;
