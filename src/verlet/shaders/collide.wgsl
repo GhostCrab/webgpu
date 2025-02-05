@@ -22,7 +22,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   );
 
   var collisionLimitReached = false;
-  var collidedTestCont = 0;
+  var collidedTestCount = 0;
 
   for (var voIndex = bins[binIndex]; voIndex != -1; voIndex = verletObjects[voIndex].binLink) {
     var pos = verletObjects[voIndex].pos.xy;
@@ -47,8 +47,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       for (var otherVOIndex = startOtherIndex; otherVOIndex != -1; otherVOIndex = verletObjects[otherVOIndex].binLink) {
         var otherRadius = verletObjects[otherVOIndex].colorAndRadius.w;
         if (otherVOIndex != voIndex && otherRadius != 0) {
-          collidedTestCont = collidedTestCont + 1;
-          if (collidedTestCont > 1000) {
+          collidedTestCount = collidedTestCount + 1;
+          if (collidedTestCount > 1000) {
             collisionLimitReached = true;
             break;
           }

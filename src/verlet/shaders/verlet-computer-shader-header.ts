@@ -40,10 +40,6 @@ export function computeShaderHeader() {
     x: i32,
     y: i32,
     count: u32,
-    xOffset: i32,
-    yOffset: i32,
-    unused1: u32,
-    unused2: u32,
   }
 
   struct CollisionStepOffset {

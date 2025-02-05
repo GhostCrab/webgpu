@@ -11,9 +11,6 @@ import binLinkClearShaderCode from './shaders/bin-link-clear.wgsl';
 import binSetShaderCode from './shaders/bin-set.wgsl';
 
 export class VerletBinComputer {
-
-  uniformBindGroupLayout: GPUBindGroupLayout;
-  storageBindGroupLayout: GPUBindGroupLayout;
   computePipelineLayout: GPUPipelineLayout;
 
   applyForcesPipeline: GPUComputePipeline;
@@ -26,20 +23,9 @@ export class VerletBinComputer {
   binLinkClearPipeline: GPUComputePipeline;
   binSetPipeline: GPUComputePipeline;
 
-  applyForcesShaderModule: GPUShaderModule;
-  collideShaderModule: GPUShaderModule;
-  collideIncrementShaderModule: GPUShaderModule;
-  constrainShaderModule: GPUShaderModule;
-  integrateShaderModule: GPUShaderModule;
-
-  binClearShaderModule: GPUShaderModule;
-  binLinkClearShaderModule: GPUShaderModule;
-  binSetShaderModule: GPUShaderModule;
-
   passDescriptor: GPUComputePassDescriptor;
 
   // buffer data
-  gridPixelDim: number;
   binSquareSize: number;
   binGridWidth: number;
   binGridHeight: number;
@@ -63,8 +49,10 @@ export class VerletBinComputer {
   uniformBindGroup: GPUBindGroup;
   storageBindGroup: GPUBindGroup;
 
+  storageBindGroupLayout: GPUBindGroupLayout;
+
   constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
-    this.uniformBindGroupLayout = device.createBindGroupLayout({
+    const uniformBindGroupLayout = device.createBindGroupLayout({
       entries: [{
         binding: 0, // binParams
         visibility: GPUShaderStage.COMPUTE,
@@ -91,12 +79,10 @@ export class VerletBinComputer {
     this.computePipelineLayout = device.createPipelineLayout({
       bindGroupLayouts: [
         globalUniformBindGroupLayout, // @group(0)
-        this.uniformBindGroupLayout,  // @group(1)
+        uniformBindGroupLayout,  // @group(1)
         this.storageBindGroupLayout,  // @group(2)
       ]
     });
-
-    this.passDescriptor = {};
   }
 
   initBuffers(device: GPUDevice,
@@ -105,49 +91,18 @@ export class VerletBinComputer {
               objectSize: number,
               voBuffer: GPUBuffer) {
     this.objectCount = objectCount;
-    this.gridPixelDim = bounds;
-
+    
     this.binSquareSize = objectSize * 2;
-    this.binGridWidth = Math.ceil((this.gridPixelDim / this.binSquareSize) / 2) * 2;
-    this.binGridHeight = Math.ceil((this.gridPixelDim / this.binSquareSize) / 2) * 2;
+    this.binGridWidth = Math.ceil((bounds / this.binSquareSize) / 2) * 2;
+    this.binGridHeight = Math.ceil((bounds / this.binSquareSize) / 2) * 2;
     this.binGridSquareCount = Math.ceil((this.binGridWidth * this.binGridHeight) / 4) * 4;
-
-    this.binClearShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + binClearShaderCode
-    });
-
-    this.binLinkClearShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + binLinkClearShaderCode
-    });
-
-    this.binSetShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + binSetShaderCode
-    });
-
-    this.applyForcesShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + applyForcesShaderCode
-    });
-
-    this.collideShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + collideShaderCode
-    });
-
-    this.collideIncrementShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + collideIncrementShaderCode
-    });
-
-    this.constrainShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + constrainShaderCode
-    });
-
-    this.integrateShaderModule = device.createShaderModule({
-      code: computeShaderHeader() + integrateShaderCode
-    });
 
     this.binClearPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.binClearShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + binClearShaderCode
+        }),
         entryPoint: 'main',
       },
     });
@@ -155,7 +110,9 @@ export class VerletBinComputer {
     this.binLinkClearPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.binLinkClearShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + binLinkClearShaderCode
+        }),
         entryPoint: 'main',
       },
     });
@@ -163,7 +120,9 @@ export class VerletBinComputer {
     this.binSetPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.binSetShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + binSetShaderCode
+        }),
         entryPoint: 'main',
       },
     });
@@ -171,7 +130,9 @@ export class VerletBinComputer {
     this.applyForcesPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.applyForcesShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + applyForcesShaderCode
+        }),
         entryPoint: 'main',
       },
     });
@@ -179,7 +140,9 @@ export class VerletBinComputer {
     this.collidePipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.collideShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + collideShaderCode
+        }),
         entryPoint: 'main',
       },
     });
@@ -187,7 +150,9 @@ export class VerletBinComputer {
     this.collideIncrementPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.collideIncrementShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + collideIncrementShaderCode
+        }),
         entryPoint: 'main',
       },
     });    
@@ -195,7 +160,9 @@ export class VerletBinComputer {
     this.constrainPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.constrainShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + constrainShaderCode
+        }),
         entryPoint: 'main',
       },
     });
@@ -203,20 +170,19 @@ export class VerletBinComputer {
     this.integratePipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
-        module: this.integrateShaderModule,
+        module: device.createShaderModule({
+          code: computeShaderHeader() + integrateShaderCode
+        }),
         entryPoint: 'main',
       },
     });
     
+    // bin Parameters
     this.binParams = new Uint32Array([
       this.binSquareSize,      // bin square size
       this.binGridWidth,       // grid width
       this.binGridHeight,      // grid height
       this.binGridSquareCount, // number of grid squares
-      0,                       // bin X start offset
-      0,                       // bin Y start offset
-      0,
-      0
     ]);
 
     this.binParamsBuffer = device.createBuffer({
@@ -248,7 +214,7 @@ export class VerletBinComputer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       mappedAtCreation: true
     });
-    new Float32Array(this.binBuffer.getMappedRange()).set(this.binData);
+    new Uint32Array(this.binBuffer.getMappedRange()).set(this.binData);
     this.binBuffer.unmap();
 
     this.uniformBindGroup = device.createBindGroup({
@@ -261,7 +227,7 @@ export class VerletBinComputer {
     });
 
     this.storageBindGroup = device.createBindGroup({
-      layout: this.binSetPipeline.getBindGroupLayout(2),
+      layout: this.storageBindGroupLayout,
       entries: [{
           binding: 0,
           resource: { buffer: voBuffer },

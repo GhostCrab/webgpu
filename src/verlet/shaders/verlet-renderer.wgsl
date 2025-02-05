@@ -23,8 +23,8 @@ fn vertex_main(
   var color = vec4f(i_color_and_radius.xyz, 1);
 
   var scaleMatrix = mat4x4<f32>(
-    i_color_and_radius.w, 0, 0, 0,
-    0, i_color_and_radius.w, 0, 0,
+    i_color_and_radius.w*1.25, 0, 0, 0,
+    0, i_color_and_radius.w*1.25, 0, 0,
     0, 0, 1, 0,
     0, 0, 0, 1
   );
@@ -44,19 +44,21 @@ fn fragment_main(
     @location(1) fragUV : vec2<f32>,
     @location(2) @interpolate(flat) cull : u32
   ) -> @location(0) vec4f {
-  return color;
+  // return color;
   
   if (cull == 1) {discard;};
 
   var recenter = fragUV - 0.5;
-  var len = sqrt((recenter.x * recenter.x) + (recenter.y * recenter.y));
-  // if (len > 0.5) {
-  //   discard;
-  // }
+  // var len = sqrt((recenter.x * recenter.x) + (recenter.y * recenter.y));
+  if (length(recenter) > 0.5) {
+    discard;
+  }
 
-  const c2 = vec4(1, 1, 1, 0);
-  var realign = saturate(inverse_lerp(0.4, 1, len * 2));
-  var out = mix(color, c2, realign); 
+  // const c2 = vec4(1, 1, 1, 0);
+  // var realign = saturate(inverse_lerp(0.4, 1, len * 2));
+  // var out = mix(color, c2, realign); 
 
-  return out;
+  // return out;
+
+  return color;
 }
