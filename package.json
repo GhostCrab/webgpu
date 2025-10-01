@@ -6,8 +6,9 @@
     "scripts": {
         "start": "npm i && npm run build && npm run dev",
         "serve": "http-server",
-        "dev": "cross-env NODE_ENV=development ts-node webpack.ts --watch",
-        "prod": "cross-env NODE_ENV=production ts-node webpack.ts --watch"
+        "dev": "concurrently \"cross-env NODE_ENV=development ts-node webpack.ts --watch\" \"http-server\"",
+        "prod": "concurrently \"cross-env NODE_ENV=production ts-node webpack.ts --watch\" \"http-server\"",
+        "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts"
     },
     "repository": {
         "type": "git",
@@ -31,6 +32,7 @@
         "@types/node": "^18.11.x",
         "@webgpu/types": "^0.1.26",
         "clean-webpack-plugin": "^4.0.x",
+        "concurrently": "^9.2.1",
         "cross-env": "^7.0.x",
         "http-server": "^14.1.x",
         "ts-loader": "^9.4.x",

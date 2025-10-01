@@ -5,6 +5,7 @@ import { mat4, vec2, Vec2 } from 'wgpu-matrix';
 import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
 import { Verlet } from './verlet/verlet';
+import GuiWrapper from './gui-wrapper';
 
 import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
 
@@ -13,7 +14,7 @@ const simParamsArrayLength = 16;
 const simParams = new Float32Array(simParamsArrayLength);
 
 export const stepCount = 20;
-const impulse = 2000;
+let impulse = 2000;
 
 let mvp = mat4.identity();
 
@@ -60,6 +61,8 @@ export default class Renderer {
   classicConstrain: boolean;
 
   verlet: Verlet;
+  gui: GuiWrapper;
+  impulse: number;
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -94,6 +97,7 @@ export default class Renderer {
     this.clickForce = 0;
     this.clickLock = false;
     this.classicConstrain = false;
+    this.impulse = impulse;
 
     document.onmousemove = (event: MouseEvent) => {
       this.mousePos = vec2.create(
@@ -102,38 +106,38 @@ export default class Renderer {
       );
     }
 
-    this.inputs.down.on('LMB', (ev: any) => {
+    this.inputs.down.on('LMB', () => {
       this.leftClickState = true
-      this.clickForce = impulse;
+      this.clickForce = this.impulse;
     });
-    this.inputs.up.on('LMB', (ev: any) => {
+    this.inputs.up.on('LMB', () => {
       this.leftClickState = false
       if (!this.rightClickState) {
         this.clickForce = 0;
       } else {
-        this.clickForce = -impulse;
+        this.clickForce = -this.impulse;
       }
     });
 
-    this.inputs.down.on('RMB', (ev: any) => {
+    this.inputs.down.on('RMB', () => {
       this.rightClickState = true
-      this.clickForce = -impulse;
+      this.clickForce = -this.impulse;
     });
-    this.inputs.up.on('RMB', (ev: any) => {
+    this.inputs.up.on('RMB', () => {
       this.rightClickState = false
       if (!this.leftClickState) {
         this.clickForce = 0;
       } else {
-        this.clickForce = impulse;
+        this.clickForce = this.impulse;
       }
     });
 
-    this.inputs.down.on('collideToggle', (ev: any) => this.doCollision = !this.doCollision);
-    this.inputs.down.on('pauseToggle', (ev: any) => this.paused = !this.paused);
-    this.inputs.down.on('clickLockToggle', (ev: any) => this.clickLock = !this.clickLock);
-    this.inputs.down.on('classicConstrainToggle', (ev: any) => this.classicConstrain = !this.classicConstrain);
+    this.inputs.down.on('collideToggle', () => this.doCollision = !this.doCollision);
+    this.inputs.down.on('pauseToggle', () => this.paused = !this.paused);
+    this.inputs.down.on('clickLockToggle', () => this.clickLock = !this.clickLock);
+    this.inputs.down.on('classicConstrainToggle', () => this.classicConstrain = !this.classicConstrain);
 
-    this.inputs.down.on('reset', (ev: any) => this.verlet.reset(this.device));
+    this.inputs.down.on('reset', () => this.verlet.reset(this.device));
   }
 
   // 🏎️ Start the rendering engine
@@ -316,6 +320,32 @@ export default class Renderer {
     console.log(this.canvas);
 
     this.verlet = new Verlet(this.canvas.height, this.uniformBindGroupLayout, this.device);
+
+    // Initialize GUI
+    this.gui = new GuiWrapper();
+    this.gui.init({
+      particleCount: this.verlet.objectCount,
+      doCollision: this.doCollision,
+      paused: this.paused,
+      clickLock: this.clickLock,
+      classicConstrain: this.classicConstrain,
+      constrainRadius: this.constrainRadius,
+      impulse: this.impulse,
+      stepCount: stepCount,
+    }, {
+      onCollisionToggle: () => { this.doCollision = !this.doCollision; },
+      onPauseToggle: () => { this.paused = !this.paused; },
+      onClickLockToggle: () => { this.clickLock = !this.clickLock; },
+      onClassicConstrainToggle: () => { this.classicConstrain = !this.classicConstrain; },
+      onReset: () => { this.verlet.reset(this.device); },
+      onConstrainRadiusChange: (value) => {
+        this.constrainRadius = value;
+        simParams[2] = value;
+      },
+      onImpulseChange: (value) => {
+        this.impulse = value;
+      },
+    });
   }
 
   // ↙️ Resize swapchain, frame buffer attachments
@@ -379,6 +409,15 @@ export default class Renderer {
       const totalTime = (now - this.startFrameMS) / 1000;
 
       this.renderStats.updateOverlay((now - this.lastFrameMS) / 1000, this);
+
+      // Update GUI FPS
+      this.gui.updateFPS(1 / ((now - this.lastFrameMS) / 1000));
+      this.gui.updateParams({
+        doCollision: this.doCollision,
+        paused: this.paused,
+        clickLock: this.clickLock,
+        classicConstrain: this.classicConstrain,
+      });
 
       // Framerate Protection - if fps drops below 10, turn off collisions
       // if (1 / ((now - this.lastFrameMS) / 1000) < 10) {
