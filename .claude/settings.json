@@ -1,0 +1,9 @@
+{
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/*.map",
+    "**/package-lock.json"
+  ]
+}

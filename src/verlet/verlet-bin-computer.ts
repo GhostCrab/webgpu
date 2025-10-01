@@ -1,11 +1,14 @@
-import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
+// Common WGSL header with shared structures and bindings
+import commonWGSL from './shaders/common.wgsl';
 
+// Compute shader modules
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
 import collideShaderCode from './shaders/collide.wgsl';
 import collideIncrementShaderCode from './shaders/collideIncrement.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 
+// Bin management shader modules
 import binClearShaderCode from './shaders/bin-clear.wgsl';
 import binLinkClearShaderCode from './shaders/bin-link-clear.wgsl';
 import binSetShaderCode from './shaders/bin-set.wgsl';
@@ -101,7 +104,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + binClearShaderCode
+          code: commonWGSL + binClearShaderCode
         }),
         entryPoint: 'main',
       },
@@ -111,7 +114,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + binLinkClearShaderCode
+          code: commonWGSL + binLinkClearShaderCode
         }),
         entryPoint: 'main',
       },
@@ -121,7 +124,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + binSetShaderCode
+          code: commonWGSL + binSetShaderCode
         }),
         entryPoint: 'main',
       },
@@ -131,7 +134,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + applyForcesShaderCode
+          code: commonWGSL + applyForcesShaderCode
         }),
         entryPoint: 'main',
       },
@@ -141,7 +144,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + collideShaderCode
+          code: commonWGSL + collideShaderCode
         }),
         entryPoint: 'main',
       },
@@ -151,17 +154,17 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + collideIncrementShaderCode
+          code: commonWGSL + collideIncrementShaderCode
         }),
         entryPoint: 'main',
       },
-    });    
+    });
 
     this.constrainPipeline = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + constrainShaderCode
+          code: commonWGSL + constrainShaderCode
         }),
         entryPoint: 'main',
       },
@@ -171,7 +174,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + integrateShaderCode
+          code: commonWGSL + integrateShaderCode
         }),
         entryPoint: 'main',
       },
