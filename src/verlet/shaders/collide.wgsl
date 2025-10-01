@@ -62,8 +62,11 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
             var dist = sqrt(dist2);
             var n = v / dist;
 
-            var massRatio1 = radius / (radius + otherRadius);
-            var massRatio2 = otherRadius / (radius + otherRadius);
+            // Mass proportional to area (πr²) for 2D circles
+            var mass1 = radius * radius;
+            var mass2 = otherRadius * otherRadius;
+            var massRatio1 = mass1 / (mass1 + mass2);
+            var massRatio2 = mass2 / (mass1 + mass2);
             var responseCoef = 0.65;
             var delta = 0.5 * responseCoef * (dist - minDist);
             offset -= n * (massRatio2 * delta);

@@ -78,6 +78,8 @@ export default class Renderer {
   verlet: Verlet;
   gui: GuiWrapper;
   impulse: number;
+  gravityMode: number;
+  gravityStrength: number;
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -125,6 +127,8 @@ export default class Renderer {
     this.clickLock = false;
     this.classicConstrain = false;
     this.impulse = impulse;
+    this.gravityMode = 0; // 0 = constant (physically correct)
+    this.gravityStrength = 2000.0;
 
     document.onmousemove = (event: MouseEvent) => {
       // Map mouse position from window space to simulation space
@@ -340,9 +344,9 @@ export default class Renderer {
     simParams[2] = this.constrainRadius; // constrainRadius
     simParams[3] = this.simHeight; // boxDim
     simParams.set([0x00000000], 4); // u32 constrainType
-    simParams[5] = 0;
-    simParams[6] = 0;
-    simParams[7] = 0;
+    simParams.set([0x00000000], 5); // u32 gravityMode (0 = constant)
+    simParams[6] = 2000.0; // gravityStrength
+    simParams[7] = 0; // unused2
     simParams[8] = 0; // constrainCenter.x
     simParams[9] = 0; // constrainCenter.y
     simParams[10] = 0; // constrainCenter.z
@@ -385,6 +389,8 @@ export default class Renderer {
       stepCount: stepCount,
       simWidth: this.simWidth,
       simHeight: this.simHeight,
+      gravityMode: this.gravityMode,
+      gravityStrength: this.gravityStrength,
     }, {
       onCollisionToggle: () => { this.doCollision = !this.doCollision; },
       onPauseToggle: () => { this.paused = !this.paused; },
@@ -397,6 +403,14 @@ export default class Renderer {
       },
       onImpulseChange: (value) => {
         this.impulse = value;
+      },
+      onGravityModeChange: (value) => {
+        this.gravityMode = value;
+        simParams[5] = value;
+      },
+      onGravityStrengthChange: (value) => {
+        this.gravityStrength = value;
+        simParams[6] = value;
       },
     });
   }

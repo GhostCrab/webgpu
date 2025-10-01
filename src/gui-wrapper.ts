@@ -22,6 +22,8 @@ export default class GuiWrapper {
     stepCount: number;
     simWidth: number;
     simHeight: number;
+    gravityMode: number;
+    gravityStrength: number;
   }, callbacks: {
     onCollisionToggle: () => void;
     onPauseToggle: () => void;
@@ -30,6 +32,8 @@ export default class GuiWrapper {
     onReset: () => void;
     onConstrainRadiusChange?: (value: number) => void;
     onImpulseChange?: (value: number) => void;
+    onGravityModeChange?: (value: number) => void;
+    onGravityStrengthChange?: (value: number) => void;
   }) {
     // Stats folder
     this.folders.stats = this.gui.addFolder('Stats');
@@ -58,6 +62,8 @@ export default class GuiWrapper {
     this.folders.params = this.gui.addFolder('Parameters');
     this.params.constrainRadius = config.constrainRadius;
     this.params.impulse = config.impulse;
+    this.params.gravityMode = config.gravityMode;
+    this.params.gravityStrength = config.gravityStrength;
 
     if (callbacks.onConstrainRadiusChange) {
       this.folders.params.add(this.params, 'constrainRadius', 50, 1000).name('Constrain Radius').onChange(callbacks.onConstrainRadiusChange);
@@ -65,6 +71,18 @@ export default class GuiWrapper {
 
     if (callbacks.onImpulseChange) {
       this.folders.params.add(this.params, 'impulse', 0, 10000).name('Mouse Impulse').onChange(callbacks.onImpulseChange);
+    }
+
+    if (callbacks.onGravityModeChange) {
+      this.folders.params.add(this.params, 'gravityMode', {
+        'Constant (Physically Correct)': 0,
+        'Radius-Scaled (Original)': 1,
+        'Mass-Based (Inverse)': 2
+      }).name('Gravity Mode').onChange(callbacks.onGravityModeChange);
+    }
+
+    if (callbacks.onGravityStrengthChange) {
+      this.folders.params.add(this.params, 'gravityStrength', 0, 10000).name('Gravity Strength').onChange(callbacks.onGravityStrengthChange);
     }
 
     // Actions

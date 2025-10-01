@@ -7,9 +7,9 @@ struct Params {
   constrainRadius: f32,
   boxDim: f32,
   constrainType: u32,
-  unused1: u32,
+  gravityMode: u32,  // 0 = constant, 1 = radius-scaled, 2 = mass-based
+  gravityStrength: f32,
   unused2: u32,
-  unused3: u32,
   constrainCenter: vec4<f32>,
   clickPoint: vec4<f32>,
 };
