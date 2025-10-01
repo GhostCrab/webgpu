@@ -2,7 +2,7 @@ import { GameInputs } from 'game-inputs'
 
 import { mat4, vec2, Vec2 } from 'wgpu-matrix';
 
-import RenderStats from './renderStats';
+// import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
 import { Verlet } from './verlet/verlet';
 import GuiWrapper from './gui-wrapper';
@@ -16,11 +16,25 @@ const simParams = new Float32Array(simParamsArrayLength);
 export const stepCount = 20;
 let impulse = 2000;
 
+// Fixed simulation resolution - physics will always run at 4K
+const SIMULATION_WIDTH = 3840;
+const SIMULATION_HEIGHT = 2160;
+
 let mvp = mat4.identity();
 
 export default class Renderer {
   canvas: HTMLCanvasElement;
   inputs: GameInputs;
+
+  // Simulation resolution (fixed, independent of window size)
+  simWidth: number = SIMULATION_WIDTH;
+  simHeight: number = SIMULATION_HEIGHT;
+
+  // Viewport for aspect ratio preservation
+  viewportX: number = 0;
+  viewportY: number = 0;
+  viewportWidth: number = 0;
+  viewportHeight: number = 0;
 
   // ⚙️ API Data Structures
   adapter: GPUAdapter;
@@ -29,7 +43,8 @@ export default class Renderer {
 
   // 🎞️ Frame Backings
   context: GPUCanvasContext;
-  renderPassDesc: RenderPassDescriptor;
+  simRenderPassDesc: RenderPassDescriptor;  // For simulation rendering (4K)
+  displayRenderPassDesc: RenderPassDescriptor;  // For final display (canvas size)
 
   // 🔺 Resources
   renderTexture: GPUTexture;
@@ -44,13 +59,13 @@ export default class Renderer {
   startFrameMS: number;
   lastFrameMS: number;
 
-  overlayElement: HTMLElement;
+  // overlayElement: HTMLElement;
 
   // State
   running = true;
   devicePixelRatio: number;
   constrainRadius: number;
-  renderStats: RenderStats = new RenderStats();
+  // renderStats: RenderStats = new RenderStats();
   mousePos: Vec2;
   leftClickState: boolean;
   rightClickState: boolean;
@@ -71,7 +86,19 @@ export default class Renderer {
     this.canvas.width = this.canvas.clientWidth * window.devicePixelRatio;
     this.canvas.height = this.canvas.clientHeight * window.devicePixelRatio;
 
-    this.overlayElement = document.getElementById('overlay');
+    // this.overlayElement = document.getElementById('overlay');
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      this.canvas.width = this.canvas.clientWidth * window.devicePixelRatio;
+      this.canvas.height = this.canvas.clientHeight * window.devicePixelRatio;
+      this.updateViewport();
+
+      // Recreate display render pass descriptor with new canvas size
+      if (this.device) {
+        this.displayRenderPassDesc = new RenderPassDescriptor(this.device, this.canvas.width, this.canvas.height);
+      }
+    });
 
     this.inputs = new GameInputs(undefined, {
       preventDefaults: false, 
@@ -100,9 +127,27 @@ export default class Renderer {
     this.impulse = impulse;
 
     document.onmousemove = (event: MouseEvent) => {
+      // Map mouse position from window space to simulation space
+      // First get mouse position in canvas pixels
+      const canvasX = event.pageX * window.devicePixelRatio;
+      const canvasY = event.pageY * window.devicePixelRatio;
+
+      // Account for viewport offset (letterboxing/pillarboxing)
+      const viewportRelativeX = canvasX - this.viewportX;
+      const viewportRelativeY = canvasY - this.viewportY;
+
+      // Clamp to viewport bounds
+      const clampedX = Math.max(0, Math.min(this.viewportWidth, viewportRelativeX));
+      const clampedY = Math.max(0, Math.min(this.viewportHeight, viewportRelativeY));
+
+      // Map from viewport space to simulation space
+      const simX = (clampedX / this.viewportWidth) * this.simWidth;
+      const simY = (clampedY / this.viewportHeight) * this.simHeight;
+
+      // Center the coordinates (simulation uses center origin)
       this.mousePos = vec2.create(
-         (event.pageX * window.devicePixelRatio) - (this.canvas.width / 2), 
-         (event.pageY * window.devicePixelRatio) - (this.canvas.height / 2)
+         simX - (this.simWidth / 2),
+         simY - (this.simHeight / 2)
       );
     }
 
@@ -204,10 +249,14 @@ export default class Renderer {
     };
 
     // ⚗️ Graphics Pipeline
-    this.renderPassDesc = new RenderPassDescriptor(this.device, this.canvas);
+    // Simulation rendering uses FIXED 4K size
+    this.simRenderPassDesc = new RenderPassDescriptor(this.device, this.simWidth, this.simHeight);
+    // Display rendering uses canvas size
+    this.displayRenderPassDesc = new RenderPassDescriptor(this.device, this.canvas.width, this.canvas.height);
 
+    // Render texture uses FIXED simulation size, not canvas size
     this.renderTexture = this.device.createTexture({
-      size: [this.canvas.width, this.canvas.height],
+      size: [this.simWidth, this.simHeight],
       format: "bgra8unorm",
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
@@ -274,21 +323,22 @@ export default class Renderer {
       ]
     });
 
+    // MVP uses FIXED simulation size, not canvas size
     mvp = mat4.ortho(
-      -this.canvas.width / 2,
-      this.canvas.width / 2,
-      this.canvas.height / 2,
-      -this.canvas.height / 2,
+      -this.simWidth / 2,
+      this.simWidth / 2,
+      this.simHeight / 2,
+      -this.simHeight / 2,
       1.05,
       -1
     );
     this.mvpBuffer = createBuffer(mvp as Float32Array, GPUBufferUsage.UNIFORM);
-    this.constrainRadius = this.canvas.height / 2 - 20;
+    this.constrainRadius = this.simHeight / 2 - 20;
 
     simParams[0] = 0; // deltaTime
     simParams[1] = 0; // totalTime
     simParams[2] = this.constrainRadius; // constrainRadius
-    simParams[3] = this.canvas.height; // boxDim
+    simParams[3] = this.simHeight; // boxDim
     simParams.set([0x00000000], 4); // u32 constrainType
     simParams[5] = 0;
     simParams[6] = 0;
@@ -319,7 +369,8 @@ export default class Renderer {
 
     console.log(this.canvas);
 
-    this.verlet = new Verlet(this.canvas.height, this.uniformBindGroupLayout, this.device);
+    // Verlet uses FIXED simulation size, not canvas size
+    this.verlet = new Verlet(this.simHeight, this.uniformBindGroupLayout, this.device);
 
     // Initialize GUI
     this.gui = new GuiWrapper();
@@ -332,6 +383,8 @@ export default class Renderer {
       constrainRadius: this.constrainRadius,
       impulse: this.impulse,
       stepCount: stepCount,
+      simWidth: this.simWidth,
+      simHeight: this.simHeight,
     }, {
       onCollisionToggle: () => { this.doCollision = !this.doCollision; },
       onPauseToggle: () => { this.paused = !this.paused; },
@@ -348,6 +401,26 @@ export default class Renderer {
     });
   }
 
+  // Calculate viewport to maintain aspect ratio (letterbox/pillarbox)
+  updateViewport() {
+    const simAspect = this.simWidth / this.simHeight;
+    const canvasAspect = this.canvas.width / this.canvas.height;
+
+    if (canvasAspect > simAspect) {
+      // Canvas is wider - add pillarboxing (black bars on sides)
+      this.viewportHeight = this.canvas.height;
+      this.viewportWidth = this.canvas.height * simAspect;
+      this.viewportX = (this.canvas.width - this.viewportWidth) / 2;
+      this.viewportY = 0;
+    } else {
+      // Canvas is taller - add letterboxing (black bars on top/bottom)
+      this.viewportWidth = this.canvas.width;
+      this.viewportHeight = this.canvas.width / simAspect;
+      this.viewportX = 0;
+      this.viewportY = (this.canvas.height - this.viewportHeight) / 2;
+    }
+  }
+
   // ↙️ Resize swapchain, frame buffer attachments
   resizeBackings() {
     // ⛓️ Swapchain
@@ -362,7 +435,7 @@ export default class Renderer {
       this.context.configure(canvasConfig);
     }
 
-    // TODO: resize this.renderPassDesc
+    this.updateViewport();
   }
 
   updateSimParams(
@@ -408,7 +481,7 @@ export default class Renderer {
       const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
       const totalTime = (now - this.startFrameMS) / 1000;
 
-      this.renderStats.updateOverlay((now - this.lastFrameMS) / 1000, this);
+      // this.renderStats.updateOverlay((now - this.lastFrameMS) / 1000, this);
 
       // Update GUI FPS
       this.gui.updateFPS(1 / ((now - this.lastFrameMS) / 1000));
@@ -445,21 +518,40 @@ export default class Renderer {
       }
 
       {
-        // ⏭ Acquire next image from context
-        this.renderPassDesc.updateResolveTarget(this.renderTexture.createView()); 
+        // Render simulation to 4K texture
+        this.simRenderPassDesc.updateResolveTarget(this.renderTexture.createView());
 
-        let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
+        let passEncoder = commandEncoder.beginRenderPass(this.simRenderPassDesc);
         passEncoder.setBindGroup(0, this.uniformBindGroup);
 
-        this.verlet.render(passEncoder);        
+        this.verlet.render(passEncoder);
         passEncoder.end();
       }
 
       {
-        this.renderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView()); 
-        
-        let passEncoder = commandEncoder.beginRenderPass(this.renderPassDesc);
-        
+        // Render 4K texture to canvas (scaled to window size with aspect ratio preservation)
+        this.displayRenderPassDesc.updateResolveTarget(this.context.getCurrentTexture().createView());
+
+        let passEncoder = commandEncoder.beginRenderPass(this.displayRenderPassDesc);
+
+        // Set viewport to maintain aspect ratio (letterbox/pillarbox)
+        passEncoder.setViewport(
+          this.viewportX,
+          this.viewportY,
+          this.viewportWidth,
+          this.viewportHeight,
+          0,
+          1
+        );
+
+        // Set scissor to match viewport
+        passEncoder.setScissorRect(
+          Math.floor(this.viewportX),
+          Math.floor(this.viewportY),
+          Math.floor(this.viewportWidth),
+          Math.floor(this.viewportHeight)
+        );
+
         passEncoder.setPipeline(this.fullscreenQuadPipeline);
         passEncoder.setBindGroup(0, this.fullscreenQuadBindGroup);
         passEncoder.draw(6);

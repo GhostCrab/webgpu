@@ -20,6 +20,8 @@ export default class GuiWrapper {
     constrainRadius: number;
     impulse: number;
     stepCount: number;
+    simWidth: number;
+    simHeight: number;
   }, callbacks: {
     onCollisionToggle: () => void;
     onPauseToggle: () => void;
@@ -34,9 +36,11 @@ export default class GuiWrapper {
     this.params.fps = 0;
     this.params.particleCount = config.particleCount;
     this.params.stepCount = config.stepCount;
+    this.params.simResolution = `${config.simWidth}x${config.simHeight}`;
     this.folders.stats.add(this.params, 'fps').disable().listen();
     this.folders.stats.add(this.params, 'particleCount').disable();
     this.folders.stats.add(this.params, 'stepCount').disable();
+    this.folders.stats.add(this.params, 'simResolution').name('Sim Resolution').disable();
 
     // Simulation controls
     this.folders.simulation = this.gui.addFolder('Simulation');

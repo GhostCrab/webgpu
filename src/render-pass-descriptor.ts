@@ -5,14 +5,14 @@ export class RenderPassDescriptor implements GPURenderPassDescriptor {
   depthTextureView: GPUTextureView;
 
   colorAttachments: GPURenderPassColorAttachment[];
-  depthStencilAttachment: GPURenderPassDepthStencilAttachment;  
+  depthStencilAttachment: GPURenderPassDepthStencilAttachment;
 
-  constructor(device: GPUDevice, canvas: HTMLCanvasElement) {
+  constructor(device: GPUDevice, width: number, height: number) {
     const sampleCount = 4;
 
     this.colorTexture = device.createTexture({
       label: 'rps-colorTexture',
-      size: [canvas.width, canvas.height],
+      size: [width, height],
       sampleCount: sampleCount,
       format: navigator.gpu.getPreferredCanvasFormat(),
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
@@ -21,7 +21,7 @@ export class RenderPassDescriptor implements GPURenderPassDescriptor {
 
     this.depthTexture = device.createTexture({
       label: 'rps-depthTexture',
-      size: [canvas.width, canvas.height, 1],
+      size: [width, height, 1],
       sampleCount: sampleCount,
       dimension: '2d',
       format: 'depth24plus-stencil8',
