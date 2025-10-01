@@ -6,6 +6,7 @@ import { mat4, vec2, Vec2 } from 'wgpu-matrix';
 import { RenderPassDescriptor } from './render-pass-descriptor';
 import { Verlet } from './verlet/verlet';
 import GuiWrapper from './gui-wrapper';
+import { FPSTracker } from './fps-tracker';
 
 import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
 
@@ -80,6 +81,7 @@ export default class Renderer {
   impulse: number;
   gravityMode: number;
   gravityStrength: number;
+  fpsTracker: FPSTracker;
 
   constructor(canvas) {
     this.canvas = canvas;
@@ -129,6 +131,7 @@ export default class Renderer {
     this.impulse = impulse;
     this.gravityMode = 0; // 0 = constant (physically correct)
     this.gravityStrength = 2000.0;
+    this.fpsTracker = new FPSTracker(0.01, 240); // Very heavy smoothing: 0.01 alpha (~100 frame lag), 240 sample buffer
 
     document.onmousemove = (event: MouseEvent) => {
       // Map mouse position from window space to simulation space
@@ -497,8 +500,9 @@ export default class Renderer {
 
       // this.renderStats.updateOverlay((now - this.lastFrameMS) / 1000, this);
 
-      // Update GUI FPS
-      this.gui.updateFPS(1 / ((now - this.lastFrameMS) / 1000));
+      // Update FPS tracker and GUI
+      this.fpsTracker.update();
+      this.gui.updateFPS(this.fpsTracker.getEMAFPS());
       this.gui.updateParams({
         doCollision: this.doCollision,
         paused: this.paused,
