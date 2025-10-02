@@ -4,7 +4,6 @@ import commonWGSL from './shaders/common.wgsl';
 // Compute shader modules
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
 import collideShaderCode from './shaders/collide.wgsl';
-import collideIncrementShaderCode from './shaders/collideIncrement.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 
@@ -13,12 +12,24 @@ import binClearShaderCode from './shaders/bin-clear.wgsl';
 import binLinkClearShaderCode from './shaders/bin-link-clear.wgsl';
 import binSetShaderCode from './shaders/bin-set.wgsl';
 
+// Generate collision shader variants with hardcoded CSO offsets
+// This eliminates the need for the collideIncrement shader and pipeline switches
+function generateCollideShaderVariant(xOffset: number, yOffset: number): string {
+  return collideShaderCode
+    .replace('var binX = (binStepX * 2) + cso.xOffset;', `var binX = (binStepX * 2) + ${xOffset};`)
+    .replace('var binY = (binStepY * 2) + cso.yOffset;', `var binY = (binStepY * 2) + ${yOffset};`)
+    // Remove the CSO binding since we don't need it anymore
+    .replace('@group(2) @binding(2) var<storage, read_write> cso: CollisionStepOffset;\n', '');
+}
+
 export class VerletBinComputer {
   computePipelineLayout: GPUPipelineLayout;
 
   applyForcesPipeline: GPUComputePipeline;
-  collidePipeline: GPUComputePipeline;
-  collideIncrementPipeline: GPUComputePipeline;
+  collidePipeline0: GPUComputePipeline;  // CSO offset (0,0)
+  collidePipeline1: GPUComputePipeline;  // CSO offset (1,0)
+  collidePipeline2: GPUComputePipeline;  // CSO offset (0,1)
+  collidePipeline3: GPUComputePipeline;  // CSO offset (1,1)
   constrainPipeline: GPUComputePipeline;
   integratePipeline: GPUComputePipeline;
 
@@ -27,6 +38,9 @@ export class VerletBinComputer {
   binSetPipeline: GPUComputePipeline;
 
   passDescriptor: GPUComputePassDescriptor;
+
+  // Track if this is the first frame for initialization
+  isFirstFrame: boolean = true;
 
   // buffer data
   binSquareSize: number;
@@ -40,11 +54,6 @@ export class VerletBinComputer {
 
   binParamsBufferSize: number;
   binParamsBuffer: GPUBuffer;
-
-  cso: Uint32Array;
-
-  csoBufferSize: number;
-  csoBuffer: GPUBuffer;
 
   binData: Int32Array
   binBuffer: GPUBuffer;
@@ -72,11 +81,8 @@ export class VerletBinComputer {
         binding: 1, // bins
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: 'storage' },
-      }, {
-        binding: 2, // cso
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'storage' },
       }]
+      // Note: CSO buffer removed - offsets are now hardcoded in shader variants
     });
 
     this.computePipelineLayout = device.createPipelineLayout({
@@ -140,21 +146,43 @@ export class VerletBinComputer {
       },
     });
 
-    this.collidePipeline = device.createComputePipeline({
+    // Create 4 collision pipeline variants with hardcoded CSO offsets
+    // Pattern: (0,0) -> (1,0) -> (0,1) -> (1,1)
+    this.collidePipeline0 = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: commonWGSL + collideShaderCode
+          code: commonWGSL + generateCollideShaderVariant(0, 0)
         }),
         entryPoint: 'main',
       },
     });
 
-    this.collideIncrementPipeline = device.createComputePipeline({
+    this.collidePipeline1 = device.createComputePipeline({
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: commonWGSL + collideIncrementShaderCode
+          code: commonWGSL + generateCollideShaderVariant(1, 0)
+        }),
+        entryPoint: 'main',
+      },
+    });
+
+    this.collidePipeline2 = device.createComputePipeline({
+      layout: this.computePipelineLayout,
+      compute: {
+        module: device.createShaderModule({
+          code: commonWGSL + generateCollideShaderVariant(0, 1)
+        }),
+        entryPoint: 'main',
+      },
+    });
+
+    this.collidePipeline3 = device.createComputePipeline({
+      layout: this.computePipelineLayout,
+      compute: {
+        module: device.createShaderModule({
+          code: commonWGSL + generateCollideShaderVariant(1, 1)
         }),
         entryPoint: 'main',
       },
@@ -196,20 +224,6 @@ export class VerletBinComputer {
     new Uint32Array(this.binParamsBuffer.getMappedRange()).set(this.binParams);
     this.binParamsBuffer.unmap();
 
-    // CSO Buffer
-    this.cso = new Uint32Array([
-      0,                       // bin X start offset
-      0,                       // bin Y start offset
-    ]);
-
-    this.csoBuffer = device.createBuffer({
-      size: this.cso.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Uint32Array(this.csoBuffer.getMappedRange()).set(this.cso);
-    this.csoBuffer.unmap();
-
     // binData: Int32Array
     this.binData = new Int32Array(this.binGridSquareCount);
     this.binBuffer = device.createBuffer({
@@ -237,12 +251,15 @@ export class VerletBinComputer {
         }, {
           binding: 1,
           resource: { buffer: this.binBuffer },
-        }, {
-          binding: 2,
-          resource: { buffer: this.csoBuffer },
         }
+        // Note: CSO buffer removed - offsets are now hardcoded in shader variants
       ],
     });
+  }
+
+  reset() {
+    // Reset to first frame state when buffers are reinitialized
+    this.isFirstFrame = true;
   }
 
   compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
@@ -261,8 +278,11 @@ export class VerletBinComputer {
       passEncoder.setPipeline(this.binClearPipeline);
       passEncoder.dispatchWorkgroups(binWorkgroupCount);
 
-      passEncoder.setPipeline(this.binLinkClearPipeline);
-      passEncoder.dispatchWorkgroups(voWorkgroupCount);
+      // Only clear bin links on the first frame - afterwards integrate.wgsl does this
+      if (this.isFirstFrame) {
+        passEncoder.setPipeline(this.binLinkClearPipeline);
+        passEncoder.dispatchWorkgroups(voWorkgroupCount);
+      }
 
       passEncoder.setPipeline(this.binSetPipeline);
       passEncoder.dispatchWorkgroups(voWorkgroupCount);
@@ -273,29 +293,19 @@ export class VerletBinComputer {
     passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
     if (doCollision) {
-      passEncoder.setPipeline(this.collidePipeline);
+      // Checkerboard collision detection: 4 passes with hardcoded offsets
+      // Each pipeline variant has its CSO offset baked in at compile time
+      passEncoder.setPipeline(this.collidePipeline0);  // offset (0,0)
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
 
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
-
-      passEncoder.setPipeline(this.collidePipeline);
+      passEncoder.setPipeline(this.collidePipeline1);  // offset (1,0)
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
 
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
-
-      passEncoder.setPipeline(this.collidePipeline);
+      passEncoder.setPipeline(this.collidePipeline2);  // offset (0,1)
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
 
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
-
-      passEncoder.setPipeline(this.collidePipeline);
+      passEncoder.setPipeline(this.collidePipeline3);  // offset (1,1)
       passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
-      
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
     }
 
     passEncoder.setPipeline(this.constrainPipeline);
@@ -304,6 +314,9 @@ export class VerletBinComputer {
     passEncoder.setPipeline(this.integratePipeline);
     passEncoder.dispatchWorkgroups(voWorkgroupCount);
 
-    passEncoder.end();   
+    passEncoder.end();
+
+    // Mark that we've completed the first frame
+    this.isFirstFrame = false;
   }
 }

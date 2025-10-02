@@ -79,6 +79,7 @@ export class Verlet {
       this.dataArray[i+14] = rgb.b;
   
       this.dataArray[i+15] = lerp(this.minRadius, this.maxRadius, Math.random());
+      this.dataArray[i+16] = -1; // Initialize binLink to -1
       i += this.dataNumFloats;
     }
 
@@ -125,18 +126,22 @@ export class Verlet {
       this.dataArray[i+1] = ypos;
       this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
       this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
-  
+
       const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
       // const rgb = HSVtoRGB( Math.random(), 1, 1);
-  
+
       this.dataArray[i+12] = rgb.r;
       this.dataArray[i+13] = rgb.g;
       this.dataArray[i+14] = rgb.b;
-  
+
       this.dataArray[i+15] = lerp(this.minRadius, this.maxRadius, Math.random());
+      this.dataArray[i+16] = -1; // Initialize binLink to -1
       i += this.dataNumFloats;
     }
 
     device.queue.writeBuffer(this.buffer, 0, this.dataArray);
+
+    // Reset the computer's first frame flag so binLink clearing happens on next frame
+    this.computer.reset();
   }
 }

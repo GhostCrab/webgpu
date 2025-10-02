@@ -145,18 +145,36 @@ The `VerletBinComputer.compute()` method executes the following pipeline:
 
 ### Performance Issues
 
-4. **🟡 Redundant Shader Passes**
-   - `bin-link-clear.wgsl` duplicates work already done in `integrate.wgsl`
-   - **Impact**: Extra pipeline switch + dispatch overhead
-   - **Solution**: Remove `binLinkClearPipeline` entirely
+4. **✅ FIXED - Redundant Shader Passes**
+   - **Location**: `bin-link-clear.wgsl` duplicates work already done in `integrate.wgsl`
+   - **Previous Problem**: `binLinkClearPipeline` ran every frame, but `integrate.wgsl` already sets `binLink = -1` at end of frame
+   - **Discovery**: When initially removed completely, simulation broke - bin links were uninitialized on first frame
+   - **Root Cause**: Only the first frame needs bin link clearing (before any integration has run)
+   - **Fix Applied**: Conditional execution using `isFirstFrame` flag
+     - Only runs `binLinkClearPipeline` on first frame and after resets
+     - Subsequent frames skip the pass since `integrate.wgsl` handles cleanup
+   - **Implementation Details**:
+     - Added `isFirstFrame: boolean = true` flag to `VerletBinComputer`
+     - Added `reset()` method to `VerletBinComputer` that resets flag
+     - Called `computer.reset()` in `Verlet.reset()` to handle simulation resets
+   - **Performance Impact**: ~7% FPS improvement (70 → 75 fps at 500k particles)
+   - **Status**: ✅ Implemented (2025-10-01)
 
-5. **🟡 Inefficient CSO Update**
-   - `collideIncrement.wgsl` uses a full compute pass for trivial arithmetic
-   - **Impact**: 4x pipeline switches, 4x compute pass overhead (GPU idle time)
-   - **Solution**:
-     - Option A: Update CSO on CPU between passes using `device.queue.writeBuffer()`
-     - Option B: Hardcode 4 variants of the collision shader with different offsets
-     - Option C: Use push constants (if supported)
+5. **✅ FIXED - Inefficient CSO Update**
+   - **Location**: `collideIncrement.wgsl` used a full compute pass for trivial arithmetic
+   - **Previous Problem**: 4× pipeline switches and shader dispatches just to update 2 integers
+   - **Options Evaluated**:
+     - Option A (CPU-side writeBuffer): Not viable - command encoding order prevents buffer updates between passes
+     - Option B (4 shader variants): Implemented successfully
+     - Option C (Push constants): Not yet available in WebGPU spec
+   - **Fix Applied**: Generated 4 collision shader variants with hardcoded CSO offsets
+     - Created `generateCollideShaderVariant(xOffset, yOffset)` function
+     - Replaced `collidePipeline` + `collideIncrementPipeline` with 4 variants (offsets: 0,0 / 1,0 / 0,1 / 1,1)
+     - Removed CSO buffer entirely from bind groups
+     - Reduced pipeline switches from 8 to 4 per frame in collision loop
+   - **Performance Impact**: ~1.3% FPS improvement (75 → 76 fps at 500k particles)
+   - **Analysis**: Small improvement indicates pipeline switching overhead is minimal; actual bottleneck is elsewhere (likely collision computation itself)
+   - **Status**: ✅ Implemented (2025-10-01)
 
 6. **🟡 Excessive Pipeline Switching**
    - Current approach: 8 unique pipelines with 11-14 pipeline switches per frame (depending on collision mode)
@@ -216,23 +234,18 @@ The `VerletBinComputer.compute()` method executes the following pipeline:
 
 ### High-Impact Optimizations
 
-1. **Consolidate Redundant Passes**
-   - **Remove**: `binLinkClearPipeline` (already done in integrate)
-   - **Estimated Impact**: ~8% reduction in compute overhead (1 fewer pipeline + dispatch)
-   - **Effort**: Trivial
+1. **✅ Consolidate Redundant Passes**
+   - **Status**: ✅ Implemented (2025-10-01)
+   - **Solution**: Conditional `binLinkClearPipeline` execution (first frame + resets only)
+   - **Actual Impact**: ~7% FPS improvement (70 → 75 fps at 500k particles)
+   - **See**: Issue #4 for implementation details
 
-2. **Replace CSO Increment Shader**
-   - **Option A**: CPU-side CSO update
-     ```typescript
-     // In VerletBinComputer.compute()
-     const csoPattern = [[0,0], [1,0], [0,1], [1,1]];
-     for (let i = 0; i < 4; i++) {
-       device.queue.writeBuffer(this.csoBuffer, 0, new Uint32Array(csoPattern[i]));
-       // ... run collision pass
-     }
-     ```
-   - **Estimated Impact**: Eliminate 4 pipeline switches per frame
-   - **Effort**: Easy
+2. **✅ Replace CSO Increment Shader**
+   - **Status**: ✅ Implemented (2025-10-01)
+   - **Solution**: Option B (4 shader variants with hardcoded offsets)
+   - **Actual Impact**: ~1.3% FPS improvement (75 → 76 fps at 500k particles)
+   - **Conclusion**: Pipeline switching is not the bottleneck; collision computation dominates
+   - **See**: Issue #5 for implementation details
 
 3. **Merge Force Application + Integration**
    - Combine `applyForces` and `integrate` into a single kernel
@@ -265,8 +278,8 @@ The `VerletBinComputer.compute()` method executes the following pipeline:
 ## Recommended Refactoring Path
 
 ### Phase 1: Low-Hanging Fruit (Quick Performance Wins)
-1. ⏸️ Remove `binLinkClearPipeline` (redundant with integrate)
-2. ⏸️ Move CSO update to CPU-side buffer writes
+1. ✅ Remove redundant `binLinkClearPipeline` execution (now conditional - first frame only)
+2. ✅ Replace CSO increment shader with hardcoded shader variants
 3. ⏸️ Add comments explaining struct padding
 4. ⏸️ Clean up commented code in constrain.wgsl
 
