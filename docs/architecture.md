@@ -38,16 +38,16 @@ WGSL has no imports. `shader-source.ts` is the one place compute shader source i
 Dispatched in this order:
 
 1. `bin-clear`, `bin-link-clear`, `bin-set` build the bin grid.
-2. `apply-forces` applies gravity (+y, scaled by radius), or the click force when one is active.
-3. `collide` then `collideIncrement`, four times.
+2. `apply-forces` applies gravity (+y, scaled by radius), or the click force when one is active. A particle exactly at the click point receives no click force.
+3. `collide` then `collideIncrement`, four times. Coincident particles separate along x.
 4. `constrain` keeps particles inside the boundary circle (two modes, selected by `params.constrainType`).
-5. `integrate` takes the Verlet step, then clears `accel` and `binLink`.
+5. `integrate` takes the Verlet step, shortened to the speed limit (`params.speedLimit`, the smallest radius among the seeded particles), then clears `accel` and `binLink`.
 
 Steps 1 and 3 are skipped when collision is off.
 
 ### Bin grid
 
-A dense grid over simulation space, not a hash table. The grid uses bins as wide as the largest particle's diameter. `bins[bin]` holds the index of the head particle and each particle's `binLink` points to the next, forming a per-bin linked list terminated by -1.
+A dense grid over simulation space, not a hash table. The grid uses bins as wide as the largest particle's diameter. `bins[bin]` holds the index of the head particle and each particle's `binLink` points to the next, forming a per-bin linked list terminated by -1. A particle outside the grid is put in the nearest edge bin.
 
 `bin-set` builds these lists lock-free with `atomicExchange`, which is why it views the same buffers through `VerletObjectAtomicBin` and `array<atomic<i32>>` while every other shader uses the plain types.
 

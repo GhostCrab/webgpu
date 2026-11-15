@@ -38,6 +38,9 @@ _Avoid_: Spatial hash, hash grid
 One advance of every particle by a constant span of simulated time. A frame runs as many substeps as the time since the last frame calls for.
 _Avoid_: Step, iteration, tick
 
+**Speed limit**:
+The furthest a particle may move in one substep: the smallest particle's radius. It keeps particles from passing through each other.
+
 **Substep rate**:
 The number of substeps per second of simulated time. Raising it makes the simulation more accurate and changes its results.
 

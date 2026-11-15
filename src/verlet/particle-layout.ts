@@ -115,6 +115,8 @@ export interface ParamsValues {
   boxDim: number;
   /** 0: classic constrain, 1: reflective constrain. */
   constrainType: number;
+  /** The furthest a particle may move in one substep. */
+  speedLimit: number;
   /** x, y, and the click force in z. */
   clickPoint: [number, number, number];
 }
