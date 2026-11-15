@@ -26,7 +26,7 @@ describe('bin grid sizing', () => {
 });
 
 describe('scatter', () => {
-  const options = { count: 500, bounds: BOUNDS, radius: RADIUS, substeps: 20 };
+  const options = { count: 500, bounds: BOUNDS, radius: RADIUS, substepRate: 1200 };
 
   test('is reproducible for a given random source', () => {
     const a = scatter({ ...options, random: mulberry32(7) });
@@ -63,7 +63,7 @@ describe.skipIf(!device)('seeding', () => {
 
   test('accepts far more particles than the default', async () => {
     const sim = await createSim(seededScatter(200000, 5));
-    sim.step(1);
+    sim.step(20);
     expect(await sim.read()).toHaveLength(200000);
   });
 });
@@ -75,7 +75,7 @@ describe.skipIf(!device)('reset', () => {
       { x: -30, y: 40 }
     ];
     const sim = await createSim(start);
-    sim.step(10);
+    sim.step(200);
     const moved = await sim.read();
     expect(moved[0].y).toBeGreaterThan(20);
 

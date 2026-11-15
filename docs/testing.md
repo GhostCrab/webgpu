@@ -16,7 +16,7 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 ## The harness
 
-`test/sim-harness.ts` is the test surface for the simulation: place particles, step whole frames, read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
+`test/sim-harness.ts` is the test surface for the simulation: place particles, advance them by a number of substeps (`sim.step(20)` is one 60 Hz frame at the default rate of 1200 per second; `substepRate` is an input), read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
 
 - It runs every GPU operation inside a validation error scope and checks the scopes when a test reads a result and when the test ends, so a WebGPU validation error fails the test that caused it.
 - It destroys each sim's GPU resources when its test ends. Each sim holds a full-size simulation target, several hundred MB of GPU memory.
@@ -38,4 +38,4 @@ A claim about what the simulation does ("this particle ends outside the boundary
 
 ## Pure modules
 
-`simulation-controls.ts`, `letterbox.ts`, `binGrid`, `scatter` and the particle layout are tested without a GPU.
+`clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `binGrid`, `scatter` and the particle layout are tested without a GPU.

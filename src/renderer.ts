@@ -1,3 +1,4 @@
+import { Clock } from './clock';
 import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
 import { SimulationControls } from './simulation-controls';
@@ -21,6 +22,7 @@ export default class Renderer {
   running = true;
 
   controls: SimulationControls;
+  clock = new Clock();
   target: SimulationTarget;
   verlet: Verlet;
   gui: GuiWrapper;
@@ -106,7 +108,6 @@ export default class Renderer {
       this.controls,
       {
         particleCount: this.verlet.particleCount,
-        substeps: this.verlet.substeps,
         simWidth: SIMULATION_WIDTH,
         simHeight: SIMULATION_HEIGHT
       },
@@ -122,23 +123,23 @@ export default class Renderer {
   }
 
   async render() {
-    let lastFrameMS = Date.now();
+    // Elapsed time comes from the browser's frame timestamps, in milliseconds.
+    let lastFrame = await this.nextFrame();
 
     do {
-      const now = Date.now();
-      const elapsed = (now - lastFrameMS) / 1000;
-      // Never simulate more than one 60 Hz frame at a time
-      const frameTime = Math.min(elapsed, 1 / 60);
-      lastFrameMS = now;
-
-      this.gui.updateFPS(1 / elapsed);
+      const now = await this.nextFrame();
+      const elapsed = (now - lastFrame) / 1000;
+      lastFrame = now;
 
       const input = this.controls.frameInput();
       const commandEncoder = this.device.createCommandEncoder();
 
-      if (!this.controls.paused) {
-        this.verlet.step(commandEncoder, frameTime, input);
-      }
+      // While paused the clock does not run, so no time is owed on resuming.
+      const tick = this.controls.paused
+        ? { substeps: 0, wanted: 0 }
+        : this.clock.advance(elapsed, input.substepRate);
+      this.verlet.step(commandEncoder, tick.substeps, input);
+      this.gui.updateFrame(1 / elapsed, tick);
 
       this.target.render(
         commandEncoder,
@@ -149,13 +150,11 @@ export default class Renderer {
       this.queue.submit([commandEncoder.finish()]);
 
       this.tickInputs();
-
-      // vsync
-      await this.sleep();
     } while (this.running);
   }
 
-  sleep() {
-    return new Promise(requestAnimationFrame);
+  /** Waits for the next display refresh and returns its timestamp in milliseconds. */
+  nextFrame() {
+    return new Promise<DOMHighResTimeStamp>(requestAnimationFrame);
   }
 }
