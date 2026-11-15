@@ -1,5 +1,3 @@
-import shaderCode from './shaders/instancedCircle.wgsl';
-
 export class Quad {
   vertexSize = 4 * 6;
   vertexCount = 6;

@@ -1,4 +1,5 @@
 import { Quad } from "../quad";
+import { particleInstanceLayout } from "./particle-layout";
 import shaderCode from './shaders/verlet-renderer.wgsl';
 
 export class VerletRenderer implements GPURenderPipelineDescriptor {
@@ -31,7 +32,8 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
       entryPoint: 'vertex_main',
       buffers: [
         this.quad.getBufferDescription(),
-        this.getBufferDescription()
+        // quad buffer layout takes locations 0 - 1
+        particleInstanceLayout(2, 3)
       ]
     };
 
@@ -73,27 +75,6 @@ export class VerletRenderer implements GPURenderPipelineDescriptor {
     };
 
     this.pipeline = device.createRenderPipeline(this);
-  }
-
-  getBufferDescription(): GPUVertexBufferLayout {
-    // quad buffer layout takes positions 0 - 1
-    return {
-      // instanced particles buffer
-      arrayStride: 20 * 4,
-      stepMode: 'instance',
-      attributes: [{
-          // instance position
-          shaderLocation: 2,
-          offset: 0,
-          format: 'float32x4',
-        }, {
-          // instance rgb-Radius
-          shaderLocation: 3,
-          offset: 12 * 4,
-          format: 'float32x4',
-        }
-      ],
-    }
   }
 
   render(passEncoder: GPURenderPassEncoder, buffer: GPUBuffer, count: number) {

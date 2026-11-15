@@ -1,4 +1,4 @@
-import { computeShaderHeader } from './shaders/verlet-computer-shader-header';
+import { computeShaderSource } from './shader-source';
 
 import applyForcesShaderCode from './shaders/apply-forces.wgsl';
 import collideShaderCode from './shaders/collide.wgsl';
@@ -101,7 +101,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + binClearShaderCode
+          code: computeShaderSource(binClearShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -111,7 +111,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + binLinkClearShaderCode
+          code: computeShaderSource(binLinkClearShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -121,7 +121,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + binSetShaderCode
+          code: computeShaderSource(binSetShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -131,7 +131,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + applyForcesShaderCode
+          code: computeShaderSource(applyForcesShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -141,7 +141,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + collideShaderCode
+          code: computeShaderSource(collideShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -151,7 +151,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + collideIncrementShaderCode
+          code: computeShaderSource(collideIncrementShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -161,7 +161,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + constrainShaderCode
+          code: computeShaderSource(constrainShaderCode)
         }),
         entryPoint: 'main',
       },
@@ -171,7 +171,7 @@ export class VerletBinComputer {
       layout: this.computePipelineLayout,
       compute: {
         module: device.createShaderModule({
-          code: computeShaderHeader() + integrateShaderCode
+          code: computeShaderSource(integrateShaderCode)
         }),
         entryPoint: 'main',
       },

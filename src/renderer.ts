@@ -4,14 +4,11 @@ import { mat4, vec2, Vec2 } from 'wgpu-matrix';
 
 // import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
+import { packParams, PARAMS_BYTES } from './verlet/particle-layout';
 import { Verlet } from './verlet/verlet';
 import GuiWrapper from './gui-wrapper';
 
 import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
-
-// Simulation Parameters Buffer Data
-const simParamsArrayLength = 16;
-const simParams = new Float32Array(simParamsArrayLength);
 
 export const stepCount = 20;
 let impulse = 2000;
@@ -335,26 +332,10 @@ export default class Renderer {
     this.mvpBuffer = createBuffer(mvp as Float32Array, GPUBufferUsage.UNIFORM);
     this.constrainRadius = this.simHeight / 2 - 20;
 
-    simParams[0] = 0; // deltaTime
-    simParams[1] = 0; // totalTime
-    simParams[2] = this.constrainRadius; // constrainRadius
-    simParams[3] = this.simHeight; // boxDim
-    simParams.set([0x00000000], 4); // u32 constrainType
-    simParams[5] = 0;
-    simParams[6] = 0;
-    simParams[7] = 0;
-    simParams[8] = 0; // constrainCenter.x
-    simParams[9] = 0; // constrainCenter.y
-    simParams[10] = 0; // constrainCenter.z
-    simParams[11] = 0; // constrainCenter.w
-    simParams[12] = 0; // clickPoint.x
-    simParams[13] = 0; // clickPoint.y
-    simParams[14] = 0; // clickPoint.z
-    simParams[15] = 0; // clickPoint.w
-    this.simParamsBuffer = createBuffer(
-      simParams,
-      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    );
+    this.simParamsBuffer = this.device.createBuffer({
+      size: PARAMS_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
 
     this.uniformBindGroup = this.device.createBindGroup({
       layout: this.uniformBindGroupLayout,
@@ -393,7 +374,6 @@ export default class Renderer {
       onReset: () => { this.verlet.reset(this.device); },
       onConstrainRadiusChange: (value) => {
         this.constrainRadius = value;
-        simParams[2] = value;
       },
       onImpulseChange: (value) => {
         this.impulse = value;
@@ -445,21 +425,15 @@ export default class Renderer {
     clickPointY = 0,
     clickForce = 0
   ) {
-    simParams[0] = totalTime;
-    simParams[1] = deltaTime;
-    simParams[12] = clickPointX;
-    simParams[13] = clickPointY;
-    simParams[14] = clickForce;
-
-    if (this.classicConstrain) {
-      simParams.set([0x00000000], 4);
-    } else {
-      simParams.set([0x00000001], 4);
-    }
-
-    this.device.queue.writeBuffer(this.simParamsBuffer, 0, simParams);
+    this.device.queue.writeBuffer(this.simParamsBuffer, 0, packParams({
+      totalTime,
+      deltaTime,
+      constrainRadius: this.constrainRadius,
+      boxDim: this.simHeight,
+      constrainType: this.classicConstrain ? 0 : 1,
+      clickPoint: [clickPointX, clickPointY, clickForce]
+    }));
   }
-  
 
   async render() {
     let frame = 0;

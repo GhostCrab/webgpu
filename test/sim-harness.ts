@@ -1,6 +1,13 @@
 import { mat4 } from 'wgpu-matrix';
 
 import { RenderPassDescriptor } from '../src/render-pass-descriptor';
+import {
+  packParams,
+  packParticles,
+  Particle,
+  unpackBinLinks,
+  unpackParticles
+} from '../src/verlet/particle-layout';
 import { Verlet } from '../src/verlet/verlet';
 import { getDevice } from './gpu';
 
@@ -16,7 +23,6 @@ export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
 export const SUBSTEPS = 20;
 export const FRAME_TIME = 1 / 60;
 
-const FLOATS = 20;
 const OBJECT_COUNT = 15000;
 
 export interface TestParticle {
@@ -29,13 +35,7 @@ export interface TestParticle {
   rgb?: [number, number, number];
 }
 
-export interface ParticleState {
-  x: number;
-  y: number;
-  prevX: number;
-  prevY: number;
-  radius: number;
-}
+export type ParticleState = Particle;
 
 export interface SimInput {
   clickX?: number;
@@ -146,28 +146,28 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
 
   // The particle count is fixed, so the rest are parked: radius 0 disables a
   // particle. They sit on a grid so no bin holds more than one of them.
-  const data = new Float32Array(FLOATS * OBJECT_COUNT);
   const side = Math.ceil(Math.sqrt(OBJECT_COUNT));
+  const all: Particle[] = [];
   for (let i = 0; i < OBJECT_COUNT; i++) {
-    const o = i * FLOATS;
     const p = particles[i];
     if (p) {
-      data[o] = p.x;
-      data[o + 1] = p.y;
-      data[o + 4] = p.prevX ?? p.x;
-      data[o + 5] = p.prevY ?? p.y;
-      data.set(p.rgb ?? [1, 1, 1], o + 12);
-      data[o + 15] = p.radius ?? RADIUS;
+      all.push({
+        x: p.x,
+        y: p.y,
+        prevX: p.prevX ?? p.x,
+        prevY: p.prevY ?? p.y,
+        radius: p.radius ?? RADIUS,
+        rgb: p.rgb ?? [1, 1, 1]
+      });
     } else {
       const x = ((i % side) - side / 2) * 10;
       const y = (Math.floor(i / side) - side / 2) * 10;
-      data[o] = data[o + 4] = x;
-      data[o + 1] = data[o + 5] = y;
+      all.push({ x, y, prevX: x, prevY: y, radius: 0, rgb: [0, 0, 0] });
     }
   }
+  const data = packParticles(all);
   device.queue.writeBuffer(verlet.buffer, 0, data);
 
-  const params = new Float32Array(16);
   let totalTime = 0;
 
   return {
@@ -177,16 +177,18 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
     step(frames, input = {}) {
       for (let f = 0; f < frames; f++) {
         totalTime += FRAME_TIME;
-        params[0] = totalTime;
-        params[1] = FRAME_TIME / SUBSTEPS;
-        params[2] = input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS;
-        params[3] = BOUNDS;
-        // The app stores the constrain type through a Float32Array, as 0.0 or 1.0.
-        params[4] = input.classicConstrain ? 0 : 1;
-        params[12] = input.clickX ?? 0;
-        params[13] = input.clickY ?? 0;
-        params[14] = input.clickForce ?? 0;
-        device.queue.writeBuffer(paramsBuffer, 0, params);
+        device.queue.writeBuffer(
+          paramsBuffer,
+          0,
+          packParams({
+            totalTime,
+            deltaTime: FRAME_TIME / SUBSTEPS,
+            constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
+            boxDim: BOUNDS,
+            constrainType: input.classicConstrain ? 0 : 1,
+            clickPoint: [input.clickX ?? 0, input.clickY ?? 0, input.clickForce ?? 0]
+          })
+        );
 
         const encoder = device.createCommandEncoder();
         for (let s = 0; s < SUBSTEPS; s++) {
@@ -197,17 +199,8 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
     },
 
     async read() {
-      const floats = new Float32Array(await readBuffer(device, verlet.buffer));
-      return particles.map((_, i) => {
-        const o = i * FLOATS;
-        return {
-          x: floats[o],
-          y: floats[o + 1],
-          prevX: floats[o + 4],
-          prevY: floats[o + 5],
-          radius: floats[o + 15]
-        };
-      });
+      const all = unpackParticles(await readBuffer(device, verlet.buffer));
+      return all.slice(0, particles.length);
     },
 
     async readBinLists() {
@@ -215,7 +208,14 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
       device.queue.writeBuffer(
         paramsBuffer,
         0,
-        new Float32Array([0, 0, DEFAULT_CONSTRAIN_RADIUS, BOUNDS])
+        packParams({
+          totalTime: 0,
+          deltaTime: 0,
+          constrainRadius: DEFAULT_CONSTRAIN_RADIUS,
+          boxDim: BOUNDS,
+          constrainType: 1,
+          clickPoint: [0, 0, 0]
+        })
       );
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
@@ -232,9 +232,7 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
       device.queue.submit([encoder.finish()]);
 
       const heads = new Int32Array(await readBuffer(device, computer.binBuffer));
-      const ints = new Int32Array(await readBuffer(device, verlet.buffer));
-      const links = new Int32Array(OBJECT_COUNT);
-      for (let i = 0; i < OBJECT_COUNT; i++) links[i] = ints[i * FLOATS + 16];
+      const links = unpackBinLinks(await readBuffer(device, verlet.buffer));
       return { heads, links };
     },
 

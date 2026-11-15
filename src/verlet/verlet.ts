@@ -1,4 +1,5 @@
 import { stepCount } from "../renderer";
+import { packParticles, Particle } from "./particle-layout";
 import { VerletBinComputer } from "./verlet-bin-computer";
 import { VerletRenderer } from "./verlet-renderer";
 
@@ -31,29 +32,32 @@ function HSVtoRGB(h: number, s: number, v: number) {
 export class Verlet {
   objectCount: number;
 
-  dataNumFloats: number;
-  dataArray: Float32Array;
-
   renderer: VerletRenderer;
   computer: VerletBinComputer;
 
   bounds: number;
   buffer: GPUBuffer;
-  
+
   minRadius = 1.5;
   maxRadius = this.minRadius;
   // maxRadius = 150;
-  
 
   constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
     this.bounds = bounds;
 
     this.objectCount = 15000;
-    // 0, 1, 2, 3,    4, 5, 6, 7,        8, 9, 10, 11,    12, 13, 14, 15,    16, 17, 18, 19,          
-    // vec4<f32> pos, vec4<f32> prevPos, vec4<f32> accel, vec4<f32> rgbR,    vec4<f32> collisionOffset
-    this.dataNumFloats = 20;
-    this.dataArray = new Float32Array(this.dataNumFloats * this.objectCount);
 
+    this.renderer = new VerletRenderer(globalUniformBindGroupLayout, device);
+    this.computer = new VerletBinComputer(globalUniformBindGroupLayout, device);
+
+    this.initBuffers(device);
+  }
+
+  /**
+   * A uniform scatter over the bounds: each particle gets a small random
+   * velocity and a shade of one random hue.
+   */
+  scatter(): Particle[] {
     let hue = Math.random();
     let lerpStart = Math.random();
     let lerpEnd = Math.random();
@@ -62,39 +66,30 @@ export class Verlet {
       lerpEnd = lerpStart;
       lerpStart = temp;
     }
-  
-    for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
-      const xpos = (Math.random() * bounds)  - (bounds / 2);
-      const ypos = (Math.random() * bounds) - (bounds / 2);
-      this.dataArray[i] = xpos;
-      this.dataArray[i+1] = ypos;
-      this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
-      this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
-  
-      const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
-      // const rgb = HSVtoRGB( Math.random(), 1, 1);
-  
-      this.dataArray[i+12] = rgb.r;
-      this.dataArray[i+13] = rgb.g;
-      this.dataArray[i+14] = rgb.b;
-  
-      this.dataArray[i+15] = lerp(this.minRadius, this.maxRadius, Math.random());
-      i += this.dataNumFloats;
+
+    const particles: Particle[] = [];
+    for (let i = 0; i < this.objectCount; i++) {
+      const x = (Math.random() * this.bounds) - (this.bounds / 2);
+      const y = (Math.random() * this.bounds) - (this.bounds / 2);
+      const prevX = x + (((Math.random() - 0.5) * 12) / stepCount);
+      const prevY = y + (((Math.random() - 0.5) * 12) / stepCount);
+
+      const { r, g, b } = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
+      const radius = lerp(this.minRadius, this.maxRadius, Math.random());
+
+      particles.push({ x, y, prevX, prevY, radius, rgb: [r, g, b] });
     }
-
-    this.renderer = new VerletRenderer(globalUniformBindGroupLayout, device);
-    this.computer = new VerletBinComputer(globalUniformBindGroupLayout, device);
-
-    this.initBuffers(device);
+    return particles;
   }
 
   initBuffers(device: GPUDevice) {
+    const data = packParticles(this.scatter());
     this.buffer = device.createBuffer({
-      size: this.dataArray.byteLength,
+      size: data.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       mappedAtCreation: true,
     });
-    new Float32Array(this.buffer.getMappedRange()).set(this.dataArray);
+    new Float32Array(this.buffer.getMappedRange()).set(data);
     this.buffer.unmap();
 
     this.computer.initBuffers(device, this.bounds, this.objectCount, this.maxRadius, this.buffer);
@@ -109,34 +104,6 @@ export class Verlet {
   }
 
   reset(device: GPUDevice) {
-    let hue = Math.random();
-    let lerpStart = Math.random();
-    let lerpEnd = Math.random();
-    if (lerpEnd < lerpStart) {
-      let temp = lerpEnd;
-      lerpEnd = lerpStart;
-      lerpStart = temp;
-    }
-
-    for (let i = 0; i < this.objectCount * this.dataNumFloats; ) {
-      const xpos = (Math.random() * this.bounds)  - (this.bounds / 2);
-      const ypos = (Math.random() * this.bounds) - (this.bounds / 2);
-      this.dataArray[i] = xpos;
-      this.dataArray[i+1] = ypos;
-      this.dataArray[i+4] = xpos + (((Math.random() - 0.5) * 12) / stepCount);
-      this.dataArray[i+5] = ypos + (((Math.random() - 0.5) * 12) / stepCount);
-  
-      const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
-      // const rgb = HSVtoRGB( Math.random(), 1, 1);
-  
-      this.dataArray[i+12] = rgb.r;
-      this.dataArray[i+13] = rgb.g;
-      this.dataArray[i+14] = rgb.b;
-  
-      this.dataArray[i+15] = lerp(this.minRadius, this.maxRadius, Math.random());
-      i += this.dataNumFloats;
-    }
-
-    device.queue.writeBuffer(this.buffer, 0, this.dataArray);
+    device.queue.writeBuffer(this.buffer, 0, packParticles(this.scatter()));
   }
 }
