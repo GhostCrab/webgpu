@@ -1,9 +1,9 @@
-// The new pipeline's bin grid build, by counting sort (ADR-0003). Each entry
-// point is one dispatch; in order:
+// The bin grid build, by counting sort (ADR-0003). Each entry point is one
+// dispatch; in order:
 //
 //   clearBins       zero every bin's count
 //   countBins       count the particles in each bin
-//   (the blocked scan in compact-scan.wgsl turns the counts into bin starts)
+//   (the blocked scan in bin-scan.wgsl turns the counts into bin starts)
 //   writeKeys       list each bin's particle ids in its run of binKeys
 //   placeParticles  copy each particle to its place in sortedParticles
 //

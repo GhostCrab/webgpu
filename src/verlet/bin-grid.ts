@@ -1,10 +1,10 @@
 import { readBuffer } from '../read-buffer';
 import { BIN_GRID_PARAMS_BYTES, packBinGridParams } from './particle-layout';
 import { computeShaderSource } from './shader-source';
-import buildShaderCode from './shaders/compact-bin-grid.wgsl';
-import scanShaderCode from './shaders/compact-scan.wgsl';
+import buildShaderCode from './shaders/bin-grid.wgsl';
+import scanShaderCode from './shaders/bin-scan.wgsl';
 
-/** The new pipeline's bin grid: a dense grid of square bins over simulation space. */
+/** The bin grid: a dense grid of square bins over simulation space. */
 export interface BinGridSize {
   /** Side of one square bin, in simulation units. */
   binSize: number;
@@ -33,7 +33,7 @@ export function sizeBinGrid({ bounds, largestRadius, minBinSize }: BinGridSizing
   return { binSize, width, height: width, binCount: width * width };
 }
 
-// Values one workgroup of the scan covers; SCAN_BLOCK in compact-scan.wgsl.
+// Values one workgroup of the scan covers; SCAN_BLOCK in bin-scan.wgsl.
 const SCAN_BLOCK = 256;
 // Workgroups per dispatch dimension, the WebGPU default limit.
 const MAX_WORKGROUPS = 65535;
@@ -91,7 +91,7 @@ export interface BuildGroups {
 }
 
 /**
- * The new pipeline's bin grid, built by counting sort every substep (ADR-0003).
+ * The bin grid, built by counting sort every substep (ADR-0003).
  * A build writes the particles into a second buffer in bin order, so each bin's
  * particles are one contiguous run, in particle id order (ADR-0001).
  *

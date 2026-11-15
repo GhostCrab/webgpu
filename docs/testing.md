@@ -18,24 +18,23 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 `test/sim-harness.ts` is the test surface for the simulation: place particles, advance them by a number of substeps (`sim.step(20)` is one 60 Hz frame at the harness's rate of 1200 per second, half the app's default; `substepRate` is an input), read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
 
-- `readBinGrid()` (new pipeline only) runs one bin grid build on its own and returns the particles in the order they sit in memory, with each bin's start; `test/bin-grid.test.ts` checks builds through it. The GPU computes bins in 32-bit floats, so a particle within a hair of a bin edge may sit in either bin; those checks allow for it.
-- `createSim(particles, { pipeline })` picks the pipeline, `'current'` by default. Behaviour both pipelines share is tested against each in `PIPELINES` with `describe.each`.
 - Particles are placed and read with a velocity in simulation units per second, and read back ordered by particle id.
-
+- `readBinGrid()` runs one bin grid build on its own and returns the particles in the order they sit in memory, with each bin's start; `test/bin-grid.test.ts` checks builds through it. The GPU computes bins in 32-bit floats, so a particle within a hair of a bin edge may sit in either bin; those checks allow for it.
+- `createSim(particles, { minBinSize })` sets the smallest bin size, for tests of large bin grids.
 - It runs every GPU operation inside a validation error scope and checks the scopes when a test reads a result and when the test ends, so a WebGPU validation error fails the test that caused it.
 - It destroys each sim's GPU resources when its test ends. Each sim holds a full-size simulation target, several hundred MB of GPU memory.
 - `test/gpu.ts` defines the WebGPU globals. Import it (or the harness) before any source module that needs them, including `particle-layout.ts`, which parses WGSL at load.
 
 ## What can be asserted
 
-In the current pipeline binning uses atomics, so the order particles are visited in differs between runs, and the four-pass collide races (see `docs/architecture.md`). For both reasons **individual particle positions are not reproducible** in its multi-particle runs. The new pipeline is deterministic (ADR-0001): a scene run twice on the same machine gives identical particles, which a test asserts. Its exact positions still differ between machines, so they are never stored as baselines. Assert on one of:
+The simulation is deterministic ([ADR-0001](adr/0001-run-to-run-determinism-on-a-fixed-substep.md)): a scene run twice on the same machine, with no user input, gives identical particles, and a test asserts it. No pass writes another particle or depends on the order atomic operations complete in; `docs/architecture.md` describes how the bin grid ([ADR-0003](adr/0003-dense-counting-sort-bin-grid-not-a-spatial-hash.md)) and the collision solve ([ADR-0002](adr/0002-jacobi-gather-collision-solver.md)) keep to that. Exact positions still differ between GPUs and browsers, so **no exact multi-particle positions are stored as baselines**. Assert on one of:
 
-- **Hand-computable results** for one or two particles (free fall, a click force, the boundary).
-- **Invariants**: no non-finite values, every particle inside the boundary circle, every particle in exactly one bin list.
-- **Aggregate statistics with a tolerance**, from `runStats`.
-- **Run-twice equality**, new pipeline only.
+- **Hand-computable results** for one or two particles: free fall, a click force, the boundary, momentum and restitution in a two-particle collision.
+- **Invariants**: no non-finite values, every particle inside the boundary circle, no speed above the speed limit, every particle exactly once in the bin grid.
+- **Aggregate statistics with a tolerance**, from `runStats`: residual overlap, touching pairs, mean speed of a settled pile.
+- **Run-twice equality**: run the same scene twice in one test and require identical particles.
 
-The aggregate ranges in `simulation.test.ts` are measured values. If a deliberate behaviour change moves them, re-measure over at least four runs and widen each range to several times the spread. New-pipeline runs of one scene do not vary, so its ranges are measured over four scatter seeds instead.
+The aggregate ranges in `simulation.test.ts` are measured values. Runs of one scene do not vary on one machine, so if a deliberate behaviour change moves them, re-measure over at least four scatter seeds and widen each range to several times the spread.
 
 ## Checking a claim by running it
 
@@ -48,7 +47,7 @@ npm run bench
 BENCH_NO_TIMESTAMPS=1 npm run bench           # as on a device without timestamp queries
 ```
 
-`bench/stage-timings.bench.ts` measures where the time in a substep goes, at 15,000, 500,000 and 1,000,000 particles, for the current pipeline and then the new one, with a table for each. It is a measuring tool, not a test: it asserts nothing and `npm test` does not run it. Vitest runs it only because Vitest already loads WGSL and the WebGPU globals; it has its own config, `vitest.bench.config.mts`.
+`bench/stage-timings.bench.ts` measures where the time in a substep goes, at 15,000, 500,000 and 1,000,000 particles, and prints one table. It is a measuring tool, not a test: it asserts nothing and `npm test` does not run it. Vitest runs it only because Vitest already loads WGSL and the WebGPU globals; it has its own config, `vitest.bench.config.mts`.
 
 - It builds each scene through the simulation interface, lets it settle for three seconds of simulated time, then advances it in frame-sized command buffers, outside any display loop, and prints a table of milliseconds per substep.
 - With timestamp queries, `Verlet.step` is given a stage timer and runs each stage of a substep in its own compute pass with timestamp writes; the table shows each stage's GPU time and their sum. The simulation never asks for the feature itself.
@@ -57,4 +56,4 @@ BENCH_NO_TIMESTAMPS=1 npm run bench           # as on a device without timestamp
 
 ## Pure modules
 
-`clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `binGrid`, `sizeBinGrid`, `scatter` and the particle layout are tested without a GPU.
+`clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `sizeBinGrid`, `scatter`, the particle layout and the benchmark's table formatting are tested without a GPU.

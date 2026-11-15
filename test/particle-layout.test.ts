@@ -5,50 +5,15 @@ import { describe, expect, test } from 'vitest';
 import './gpu';
 
 const {
-  COMPACT_PARTICLE_BYTES,
-  packCompactParticles,
   packParams,
   packParticles,
   PARTICLE_BYTES,
   particleInstanceLayout,
   structShape,
-  unpackCompactParticles,
   unpackParticles
 } = await import('../src/verlet/particle-layout');
 
 type Rgb = [number, number, number];
-
-test('particles survive a round trip through the particle buffer layout', () => {
-  const particles = [
-    { id: 0, x: 1, y: -2, vx: -2400, vy: 2400, radius: 1.5, rgb: [0.25, 0.5, 0.75] as Rgb },
-    { id: 1, x: 100, y: 200, vx: 0, vy: 0, radius: 0, rgb: [1, 0, 0] as Rgb }
-  ];
-  // The current pipeline holds velocity as the move over one substep.
-  const data = packParticles(particles, 1200);
-  expect(data.byteLength).toBe(2 * PARTICLE_BYTES);
-  expect(unpackParticles(data.buffer, 1200)).toEqual(particles);
-});
-
-test('the current pipeline holds velocity as a move per substep behind the position', () => {
-  const [particle] = unpackParticles(
-    packParticles([{ x: 10, y: 20, vx: 600, vy: -1200, radius: 1, rgb: [1, 1, 1] }], 1200)
-      .buffer,
-    2400
-  );
-  // 0.5 and -1 per substep, read back at twice the substep rate.
-  expect([particle.vx, particle.vy]).toEqual([1200, -2400]);
-});
-
-test('the atomic view of a particle has the same layout as the plain one', () => {
-  expect(structShape('VerletObjectAtomicBin')).toEqual(structShape('VerletObject'));
-});
-
-test('the instance layout strides over whole particles', () => {
-  const layout = particleInstanceLayout(2, 3);
-  expect(layout.arrayStride).toBe(PARTICLE_BYTES);
-  expect(layout.stepMode).toBe('instance');
-  expect([...layout.attributes].map((a) => a.shaderLocation)).toEqual([2, 3]);
-});
 
 test('params are packed where the shader struct puts them', () => {
   const buffer = packParams({
@@ -81,7 +46,7 @@ test('params are packed where the shader struct puts them', () => {
   expect(floats[offset.particleDamping]).toBe(0.25);
 });
 
-describe('the compact particle of the new pipeline', () => {
+describe('the particle', () => {
   const particles = [
     { id: 0, x: 1, y: -2, vx: -2400, vy: 2400, radius: 1.5, rgb: [0, 0.2, 1] as Rgb },
     { id: 1, x: 100, y: 200, vx: 0.5, vy: -7, radius: 6, rgb: [1, 0, 0.6] as Rgb },
@@ -89,26 +54,33 @@ describe('the compact particle of the new pipeline', () => {
   ];
 
   test('takes about 32 bytes', () => {
-    expect(COMPACT_PARTICLE_BYTES).toBeLessThanOrEqual(32);
+    expect(PARTICLE_BYTES).toBeLessThanOrEqual(32);
   });
 
   test('survives a round trip through the particle and colour buffers', () => {
-    const { particleData, colorData } = packCompactParticles(particles);
-    expect(particleData.byteLength).toBe(3 * COMPACT_PARTICLE_BYTES);
-    expect(unpackCompactParticles(particleData.buffer, colorData.buffer)).toEqual(particles);
+    const { particleData, colorData } = packParticles(particles);
+    expect(particleData.byteLength).toBe(3 * PARTICLE_BYTES);
+    expect(unpackParticles(particleData.buffer, colorData.buffer)).toEqual(particles);
   });
 
   test('reads back ordered by particle id, each with its own colour, wherever it sits in memory', () => {
     const shuffled = [particles[2], particles[0], particles[1]];
-    const { particleData, colorData } = packCompactParticles(shuffled);
-    expect(unpackCompactParticles(particleData.buffer, colorData.buffer)).toEqual(particles);
+    const { particleData, colorData } = packParticles(shuffled);
+    expect(unpackParticles(particleData.buffer, colorData.buffer)).toEqual(particles);
   });
 
   test('stores colour at 8 bits a channel', () => {
-    const { particleData, colorData } = packCompactParticles([
+    const { particleData, colorData } = packParticles([
       { ...particles[0], rgb: [0.5, 0.25, 0.75] }
     ]);
-    const [p] = unpackCompactParticles(particleData.buffer, colorData.buffer);
+    const [p] = unpackParticles(particleData.buffer, colorData.buffer);
     expect(p.rgb).toEqual([128 / 255, 64 / 255, 191 / 255]);
+  });
+
+  test('the instance layout strides over whole particles', () => {
+    const layout = particleInstanceLayout(2, 3, 4);
+    expect(layout.arrayStride).toBe(PARTICLE_BYTES);
+    expect(layout.stepMode).toBe('instance');
+    expect([...layout.attributes].map((a) => a.shaderLocation)).toEqual([2, 3, 4]);
   });
 });

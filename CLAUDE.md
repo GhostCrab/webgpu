@@ -19,7 +19,7 @@ A GPU-driven 2D Verlet particle simulation running in WebGPU compute shaders. Co
 - There is no dev-server reload: refresh the page after webpack rebuilds.
 - `lil-gui` is the global `lil`, loaded from a CDN `<script>` tag in `index.html`, not an npm dependency.
 - In Git Bash, run Vitest from an upper-case drive letter path (`cd "C:/Users/..."`).
-- Multi-particle GPU runs are not reproducible particle by particle; see `docs/testing.md` before asserting on positions.
+- Simulation runs without user input are identical run to run on one machine, but differ between machines (GPUs, browsers). Assert run-twice equality within one test, never stored exact positions; see `docs/testing.md`.
 
 ## Agent skills
 

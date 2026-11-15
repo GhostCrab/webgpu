@@ -15,8 +15,8 @@ struct Params {
   constrainCenter: vec4<f32>,
   // xy: the point, z: the force (positive attracts, negative repels, 0 is off)
   clickPoint: vec4<f32>,
-  // The new pipeline's collision solve (spec #9). Each particle's averaged
-  // correction is scaled by the relaxation factor.
+  // The collision solve scales each particle's averaged correction by the
+  // relaxation factor.
   relaxation: f32,
   // Fraction of the relative normal speed two particles keep when they collide.
   particleRestitution: f32,
@@ -26,8 +26,8 @@ struct Params {
   unused3: f32,
 };
 
-// A particle of the new pipeline (spec #9). Its colour is not here: it lives in
-// a buffer of its own, indexed by id, that only drawing reads.
+// A particle. Its colour is not here: it lives in a buffer of its own, indexed
+// by particle id, that only drawing reads.
 struct Particle {
   pos: vec2<f32>,
   // In simulation units per second.
@@ -38,46 +38,8 @@ struct Particle {
   id: u32,
 }
 
-// A particle of the current pipeline.
-struct VerletObject {
-  pos: vec4<f32>,
-  prevPos: vec4<f32>,
-  accel: vec4<f32>,
-  colorAndRadius: vec4<f32>,
-  binLink: i32,
-  unused1: f32,
-  unused2: f32,
-  unused3: f32,
-}
-
-// The same memory as VerletObject, viewed with an atomic binLink so bin-set
-// can build the bin lists without locks. The two must stay field-for-field
-// identical; particle-layout.test.ts checks that they do.
-struct VerletObjectAtomicBin {
-  pos: vec4<f32>,
-  prevPos: vec4<f32>,
-  accel: vec4<f32>,
-  colorAndRadius: vec4<f32>,
-  binLink: atomic<i32>,
-  unused1: f32,
-  unused2: f32,
-  unused3: f32,
-}
-
-struct BinParams {
-  size: i32,
-  x: i32,
-  y: i32,
-  count: u32,
-}
-
-struct CollisionStepOffset {
-  xOffset: i32,
-  yOffset: i32,
-}
-
-// The new pipeline's bin grid (spec #9): width x height square bins, binSize
-// wide, covering the square of side params.boxDim centred on the origin.
+// The bin grid: width x height square bins, binSize wide, covering the square
+// of side params.boxDim centred on the origin.
 struct BinGridParams {
   binSize: f32,
   width: u32,
@@ -86,12 +48,9 @@ struct BinGridParams {
 }
 
 @group(0) @binding(1) var<uniform> params: Params;
-// The current pipeline's bin grid.
-@group(1) @binding(0) var<uniform> binParams: BinParams;
-// The new pipeline's bin grid.
 @group(1) @binding(1) var<uniform> binGrid: BinGridParams;
 
-// The new pipeline's bin a position falls in, as x and y. A position outside
+// The bin a position falls in, as x and y. A position outside
 // the grid, or not finite, is placed in an edge bin, so it can never index
 // outside the bin buffers.
 fn binCoords(pos: vec2<f32>) -> vec2<u32> {
@@ -103,7 +62,7 @@ fn binCoords(pos: vec2<f32>) -> vec2<u32> {
   );
 }
 
-// The index of the new pipeline's bin a position falls in.
+// The index of the bin a position falls in.
 fn binIndex(pos: vec2<f32>) -> u32 {
   let c = binCoords(pos);
   return c.y * binGrid.width + c.x;
@@ -123,11 +82,9 @@ struct Constrained {
   moved: bool,
 }
 
-// The selected constrain, shared by both pipelines' constrain shaders. A
-// particle past the boundary circle is placed back on it. Its velocity is its
-// own, never the distance it is moved back, so a particle far outside the
-// circle returns to it without being flung across. The result is linear in
-// velocity, so it holds whatever units velocity is measured in.
+// The selected constrain. A particle past the boundary circle is placed back
+// on it. Its velocity is its own, never the distance it is moved back, so a
+// particle far outside the circle returns to it without being flung across.
 fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Constrained {
   let center = params.constrainCenter.xy;
   let edge = params.constrainRadius - radius;

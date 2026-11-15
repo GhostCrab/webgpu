@@ -3,12 +3,9 @@ import { describe, expect, test } from 'vitest';
 import { getDevice } from './gpu';
 
 import { SimulationTarget } from '../src/simulation-target';
-import { binGrid } from '../src/verlet/verlet-bin-computer';
 import {
-  BOUNDS,
-  createSim as createAnySim,
+  createSim,
   DEFAULT_CONSTRAIN_RADIUS,
-  PIPELINES,
   RADIUS,
   runStats,
   mulberry32,
@@ -20,10 +17,10 @@ import {
 const device = await getDevice();
 
 // Distance fallen from rest after n substeps of dt seconds: a * dt^2 * n(n+1)/2,
-// where gravity a is 2000 * radius.
+// where gravity a is 3000 units per second squared.
 function drop(substeps: number, substepRate = SUBSTEP_RATE) {
   const dt = 1 / substepRate;
-  return 2000 * RADIUS * dt * dt * ((substeps * (substeps + 1)) / 2);
+  return 3000 * dt * dt * ((substeps * (substeps + 1)) / 2);
 }
 
 // 20 substeps at 1200 per second: one 60 Hz frame.
@@ -35,16 +32,7 @@ const perSubstep = (speed: number) => speed / SUBSTEP_RATE;
 /** A move over one substep at the default rate, as a speed in simulation units per second. */
 const perSecond = (move: number) => move * SUBSTEP_RATE;
 
-/** Makes sims on the current pipeline, unless a test asks for another. */
-const createSim: typeof createAnySim = (particles, options) =>
-  createAnySim(particles, { pipeline: 'current', ...options });
-
-// The behaviour both pipelines share is judged by the same tests.
-describe.skipIf(!device).each(PIPELINES)('the %s pipeline', (pipeline) => {
-const createSim: typeof createAnySim = (particles, options) =>
-  createAnySim(particles, { pipeline, ...options });
-
-describe('one particle', () => {
+describe.skipIf(!device)('one particle', () => {
   test('falls under gravity along +y', async () => {
     const sim = await createSim([{ x: 0, y: 0 }]);
     sim.step(FRAME);
@@ -110,9 +98,8 @@ describe('one particle', () => {
 });
 
 // No particle moves further than the smallest particle's radius in one
-// substep. The last thing a substep does is move each particle, so after a
-// substep the gap between position and previous position is that move.
-describe('the speed limit', () => {
+// substep: its speed is at most that radius times the substep rate.
+describe.skipIf(!device)('the speed limit', () => {
   const small = 1;
   const distance = (p: { x: number; y: number }, q: { x: number; y: number }) =>
     Math.hypot(p.x - q.x, p.y - q.y);
@@ -155,7 +142,7 @@ describe('the speed limit', () => {
   });
 });
 
-describe('a particle exactly at the click point', () => {
+describe.skipIf(!device)('a particle exactly at the click point', () => {
   test.each([2000, -2000])('receives no click force and stays finite (force %s)', async (clickForce) => {
     const sim = await createSim([{ x: 100, y: 50 }]);
     sim.step(FRAME, { clickX: 100, clickY: 50, clickForce });
@@ -164,7 +151,7 @@ describe('a particle exactly at the click point', () => {
   });
 });
 
-describe('the boundary circle', () => {
+describe.skipIf(!device)('the boundary circle', () => {
   const edge = DEFAULT_CONSTRAIN_RADIUS - RADIUS;
   // Just inside the bottom of the circle, moving down at 0.5 per substep.
   const falling = [{ x: 0, y: 1050, vy: perSecond(0.5) }];
@@ -270,7 +257,7 @@ describe('the boundary circle', () => {
   });
 });
 
-describe('two overlapping particles', () => {
+describe.skipIf(!device)('two overlapping particles', () => {
   const pair = [
     { x: -1, y: 0 },
     { x: 1, y: 0 }
@@ -311,17 +298,15 @@ describe('two overlapping particles', () => {
     expect(a.y).toBe(b.y);
   });
 });
-});
 
-describe.skipIf(!device)('only the new pipeline', () => {
+describe.skipIf(!device)('several particles', () => {
   test('particles of different radii fall at the same rate', async () => {
     const sim = await createSim(
       [
         { x: -100, y: 0, radius: 1 },
         { x: 0, y: 0, radius: RADIUS },
         { x: 100, y: 0, radius: 6 }
-      ],
-      { pipeline: 'new' }
+      ]
     );
     sim.step(FRAME);
     for (const p of await sim.read()) {
@@ -336,8 +321,7 @@ describe.skipIf(!device)('only the new pipeline', () => {
         { x: 0, y: 0, vx: 600, rgb: [1, 0, 0] },
         { x: 50, y: 0, vx: -300, rgb: [0, 1, 0] },
         { x: 100, y: 0, rgb: [0, 0, 1] }
-      ],
-      { pipeline: 'new' }
+      ]
     );
     sim.step(1);
     const particles = await sim.read();
@@ -353,10 +337,8 @@ describe.skipIf(!device)('only the new pipeline', () => {
   });
 });
 
-// Collisions in the new pipeline: the Jacobi gather and the velocity update.
-describe.skipIf(!device)('collisions in the new pipeline', () => {
-  const createNewSim: typeof createAnySim = (particles, options) =>
-    createAnySim(particles, { pipeline: 'new', ...options });
+// Collisions: the Jacobi gather and the velocity update.
+describe.skipIf(!device)('collisions', () => {
   const mass = (p: { radius: number }) => p.radius * p.radius;
 
   // Two free particles on the x axis, closing head-on at 1200 units per
@@ -372,7 +354,7 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
     [1, 4]
   ])('conserve momentum in a head-on collision (radii %s and %s)', async (left, right) => {
     const before = headOn(left, right);
-    const sim = await createNewSim(before);
+    const sim = await createSim(before);
     sim.step(3 * FRAME);
     const [a, b] = await sim.read();
     // They have met and parted.
@@ -388,7 +370,7 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
   test.each([0, 0.25, 0.5, 1])(
     'a head-on collision keeps the fraction of relative speed the restitution states (%s)',
     async (particleRestitution) => {
-      const sim = await createNewSim(headOn(1.5, 3));
+      const sim = await createSim(headOn(1.5, 3));
       sim.step(3 * FRAME, { particleRestitution });
       const [a, b] = await sim.read();
       expect((b.vx - a.vx) / 1200).toBeCloseTo(particleRestitution, 3);
@@ -400,7 +382,7 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
     // y. They first overlap after 18 substeps, by then level with each other,
     // so the contact is along x. Both fall alike, so gravity leaves their
     // relative velocity alone.
-    const sim = await createNewSim([
+    const sim = await createSim([
       { x: -10, y: -4.5, vx: 600, vy: 300 },
       { x: 10, y: 4.5, vx: -600, vy: -300 }
     ]);
@@ -411,7 +393,7 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
   });
 
   test('two coincident particles of unequal radii separate and stay finite', async () => {
-    const sim = await createNewSim([
+    const sim = await createSim([
       { x: 10, y: 0, radius: 1 },
       { x: 10, y: 0, radius: 4 }
     ]);
@@ -442,7 +424,7 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
   }
 
   async function settledPile(particles: { radius?: number }[]) {
-    const sim = await createNewSim(particles as Parameters<typeof createNewSim>[0]);
+    const sim = await createSim(particles as Parameters<typeof createSim>[0]);
     sim.step(SETTLE, { substepRate: PILE_RATE });
     const settled = await sim.read();
     const smallest = Math.min(...settled.map((p) => p.radius));
@@ -487,7 +469,7 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
 
   test('a multi-particle scene run twice gives identical particles', async () => {
     const run = async () => {
-      const sim = await createNewSim(mixedScatter(8000, 99));
+      const sim = await createSim(mixedScatter(8000, 99));
       sim.step(PILE_RATE, { substepRate: PILE_RATE });
       return sim.read();
     };
@@ -495,103 +477,8 @@ describe.skipIf(!device)('collisions in the new pipeline', () => {
     const second = await run();
     expect(second).toEqual(first);
   });
-});
 
-describe.skipIf(!device)('binning', () => {
-  test('puts every particle in exactly one bin list', async () => {
-    const count = 15000;
-    const sim = await createSim(seededScatter(count, 99));
-    const { heads, links } = await sim.readBinLists();
-
-    const seen = new Uint8Array(count);
-    let visited = 0;
-    for (const head of heads) {
-      for (let i = head; i !== -1; i = links[i]) {
-        expect(seen[i]).toBe(0);
-        seen[i] = 1;
-        visited++;
-      }
-    }
-    expect(visited).toBe(count);
-  });
-
-  test('puts a particle outside the bin grid in the nearest edge bin', async () => {
-    const { width, height, binSize } = binGrid(BOUNDS, 2 * RADIUS);
-    const edge = (width * binSize) / 2;
-    // Beyond the right, left and bottom edges, and beyond a corner, each in a
-    // row or column where a wrapped index would land in the wrong bin.
-    const outside = [
-      { x: edge + 50, y: 0 },
-      { x: -edge - 50, y: 100 },
-      { x: 200, y: edge + 50 },
-      { x: -edge - 5000, y: -edge - 5000 }
-    ];
-    const expected = [
-      [width - 1, height / 2],
-      [0, height / 2 + Math.floor(100 / binSize)],
-      [width / 2 + Math.floor(200 / binSize), height - 1],
-      [0, 0]
-    ];
-    const sim = await createSim([...outside, { x: 0, y: 0 }]);
-    const { heads, links } = await sim.readBinLists();
-
-    const binOf = new Map<number, [number, number]>();
-    for (let bin = 0; bin < heads.length; bin++) {
-      for (let i = heads[bin]; i !== -1; i = links[i]) {
-        expect(binOf.has(i)).toBe(false);
-        binOf.set(i, [bin % width, Math.floor(bin / width)]);
-      }
-    }
-    expect(binOf.size).toBe(outside.length + 1);
-    expect(outside.map((_, i) => binOf.get(i))).toEqual(expected);
-  });
-});
-
-// The full app scenario. Binning uses atomics, so the order particles are
-// visited in, and therefore float rounding, differs between runs. Individual
-// positions are not reproducible; these aggregate measures are. The ranges are
-// measured values, widened to several times the run-to-run spread seen across
-// four runs. They were last re-measured with the speed limit, the non-finite
-// guards and the reflective constrain as a true bounce all in place.
-describe.skipIf(!device)('15,000 seeded particles', () => {
-  test('after one frame the aggregate state matches the recorded baseline', async () => {
-    const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(FRAME);
-    const stats = runStats(await sim.read());
-
-    expect(stats.nonFinite).toBe(0);
-    expect(stats.centreX).toBeCloseTo(-2.403, 1); // within 0.05
-    expect(stats.centreY).toBeCloseTo(3.114, 1);
-    expect(stats.meanDistance).toBeCloseTo(787.063, 1);
-    expect(perSubstep(stats.meanSpeed)).toBeCloseTo(0.3651, 2); // within 0.005
-  });
-
-  test('settles into a pile at the bottom of the circle', async () => {
-    const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(300 * FRAME);
-    const stats = runStats(await sim.read());
-
-    expect(stats.nonFinite).toBe(0);
-    // Every particle ends inside the boundary circle.
-    expect(stats.maxDistance).toBeLessThan(DEFAULT_CONSTRAIN_RADIUS - RADIUS + 0.1);
-    // At rest.
-    expect(perSubstep(stats.meanSpeed)).toBeLessThan(0.05);
-    // Piled at the bottom (+y), roughly centred. Measured: centreY 970.4 to 970.7.
-    expect(stats.centreY).toBeGreaterThan(967);
-    expect(stats.centreY).toBeLessThan(974);
-    expect(Math.abs(stats.centreX)).toBeLessThan(40);
-    // Measured: 1003.4 to 1004.5.
-    expect(stats.meanDistance).toBeGreaterThan(999);
-    expect(stats.meanDistance).toBeLessThan(1009);
-    // Collisions resolved to a small residual overlap. Measured: mean 0.085 to
-    // 0.089, max 0.81 to 0.91, about 42,200 touching pairs.
-    expect(stats.meanOverlap).toBeLessThan(0.13);
-    expect(stats.maxOverlap).toBeLessThan(1.5);
-    expect(stats.overlapPairs).toBeGreaterThan(39000);
-    expect(stats.overlapPairs).toBeLessThan(44000);
-  });
-
-  test('without collision the particles collapse onto the boundary', async () => {
+  test('without collision 15,000 particles collapse onto the boundary', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
     sim.step(300 * FRAME, { collide: false });
     const stats = runStats(await sim.read());
@@ -603,14 +490,13 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
 });
 
 describe.skipIf(!device)('particle rendering', () => {
-  test.each(PIPELINES)('draws each particle as a disc of its colour at its position (%s pipeline)', async (pipeline) => {
+  test('draws each particle as a disc of its colour at its position', async () => {
     // A 256x144 image of the 3840x2160 space: 15 simulation units per pixel.
     const sim = await createSim(
       [
         { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
         { x: -1200, y: -600, radius: 150, rgb: [1, 0, 0] }
-      ],
-      { pipeline }
+      ]
     );
     const pixel = await sim.render(256, 144);
 
@@ -621,15 +507,14 @@ describe.skipIf(!device)('particle rendering', () => {
     expect(pixel(48, 112)).toEqual([0, 0, 0]);
   });
 
-  test('particles keep their colours while the new pipeline reorders them every substep', async () => {
+  test('particles keep their colours while the bin grid reorders them every substep', async () => {
     // Bin order runs left to right; particle id order does not.
     const sim = await createSim(
       [
         { x: 900, y: 0, radius: 150, rgb: [1, 0, 0] },
         { x: -900, y: 0, radius: 150, rgb: [0, 1, 0] },
         { x: 0, y: 0, radius: 150, rgb: [0, 0, 1] }
-      ],
-      { pipeline: 'new' }
+      ]
     );
     // An odd number of substeps, so the particles end in the other buffer.
     sim.step(3);

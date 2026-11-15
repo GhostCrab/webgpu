@@ -1,23 +1,18 @@
-@group(2) @binding(0) var<storage, read_write> verletObjects: array<VerletObject>;
+@group(2) @binding(0) var<storage, read_write> particles: array<Particle>;
 
-// Runs after the integrate, so a particle that crossed the boundary circle in
-// this substep is back on it before the substep ends. Velocity is the
-// particle's own move over the substep (pos - prevPos).
+// The boundary stage of a substep: the selected constrain, so that no substep
+// ends with a particle outside the boundary circle.
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
-  var voIndex = u32(GlobalInvocationID.x);
-
-  if (voIndex >= arrayLength(&verletObjects)) {
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= arrayLength(&particles)) {
     return;
   }
 
-  let pos = verletObjects[voIndex].pos.xy;
-  let radius = verletObjects[voIndex].colorAndRadius.w;
-  let c = constrainToBoundary(pos, pos - verletObjects[voIndex].prevPos.xy, radius);
+  let c = constrainToBoundary(particles[i].pos, particles[i].vel, particles[i].radius);
   if (!c.moved) {
     return;
   }
-
-  verletObjects[voIndex].pos = vec4<f32>(c.pos, 0.0, 0.0);
-  verletObjects[voIndex].prevPos = vec4<f32>(c.pos - c.velocity, 0.0, 0.0);
+  particles[i].pos = c.pos;
+  particles[i].vel = c.velocity;
 }

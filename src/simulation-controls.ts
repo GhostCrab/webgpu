@@ -24,11 +24,11 @@ export class SimulationControls {
   impulse = 2000;
   /** Substeps per second of simulated time: the simulation's accuracy. */
   substepRate = DEFAULT_SUBSTEP_RATE;
-  /** Scales each particle's averaged collision correction (new pipeline). */
+  /** Scales each particle's averaged collision correction. */
   relaxation = DEFAULT_COLLISION_SETTINGS.relaxation;
-  /** Fraction of relative normal speed kept when two particles collide (new pipeline). */
+  /** Fraction of relative normal speed kept when two particles collide. */
   particleRestitution = DEFAULT_COLLISION_SETTINGS.particleRestitution;
-  /** Fraction of relative speed along the contact lost when two particles collide (new pipeline). */
+  /** Fraction of relative speed along the contact lost when two particles collide. */
   particleDamping = DEFAULT_COLLISION_SETTINGS.particleDamping;
 
   private pointer: [number, number] = [0, 0];

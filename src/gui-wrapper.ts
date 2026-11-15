@@ -52,9 +52,9 @@ export default class GuiWrapper {
     parameters.add(controls, 'constrainRadius', 50, 1000).name('Constrain Radius');
     parameters.add(controls, 'impulse', 0, 10000).name('Mouse Impulse');
     parameters.add(controls, 'substepRate', 240, 4800, 60).name('Substeps per Second');
-    parameters.add(controls, 'relaxation', 0.5, 2, 0.05).name('Relaxation (new pipeline)');
-    parameters.add(controls, 'particleRestitution', 0, 1, 0.05).name('Particle Restitution (new)');
-    parameters.add(controls, 'particleDamping', 0, 1, 0.05).name('Particle Damping (new)');
+    parameters.add(controls, 'relaxation', 0.5, 2, 0.05).name('Relaxation');
+    parameters.add(controls, 'particleRestitution', 0, 1, 0.05).name('Particle Restitution');
+    parameters.add(controls, 'particleDamping', 0, 1, 0.05).name('Particle Damping');
 
     this.gui.add({ reset: onReset }, 'reset').name('Reset (R)');
 

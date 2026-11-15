@@ -3,27 +3,9 @@ import { describe, expect, test } from 'vitest';
 import { getDevice } from './gpu';
 import { BOUNDS, createSim, mulberry32, RADIUS, seededScatter } from './sim-harness';
 
-const { binGrid } = await import('../src/verlet/verlet-bin-computer');
 const { scatter } = await import('../src/verlet/verlet');
 
 const device = await getDevice();
-
-describe('bin grid sizing', () => {
-  test('covers the bounds with bins one particle diameter wide', () => {
-    expect(binGrid(2160, 3)).toEqual({ binSize: 3, width: 720, height: 720, binCount: 518400 });
-  });
-
-  test('rounds the grid up to an even number of bins each way', () => {
-    // 100 / 4 = 25 bins, which collision's every-second-bin passes cannot split.
-    const grid = binGrid(100, 4);
-    expect(grid.width).toBe(26);
-    expect(grid.height).toBe(26);
-  });
-
-  test('never makes a bin narrower than asked', () => {
-    expect(binGrid(100, 2.4).binSize).toBe(3);
-  });
-});
 
 describe('scatter', () => {
   const options = { count: 500, bounds: BOUNDS, radius: RADIUS };

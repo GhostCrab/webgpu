@@ -3,11 +3,10 @@ import { getDevice } from './gpu';
 
 import { afterEach } from 'vitest';
 
-import { readBuffer } from '../src/read-buffer';
 import { SimulationTarget } from '../src/simulation-target';
-import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
+import { Particle } from '../src/verlet/particle-layout';
 import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
-import { BinGridContents, PipelineName, scatter, Verlet } from '../src/verlet/verlet';
+import { BinGridContents, scatter, Verlet } from '../src/verlet/verlet';
 
 export type { BinGridContents };
 
@@ -20,7 +19,7 @@ export type { BinGridContents };
 export const BOUNDS = 2160;
 export const RADIUS = 1.5;
 export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
-/** The app's starting substep rate: 20 substeps per 60 Hz frame. */
+/** 20 substeps per 60 Hz frame: half the app's default substep rate. */
 export const SUBSTEP_RATE = 1200;
 // Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
 const SUBSTEPS_PER_SUBMIT = 20;
@@ -49,7 +48,7 @@ export interface SimInput {
   collide?: boolean;
   /** Substeps per second of simulated time. Defaults to SUBSTEP_RATE. */
   substepRate?: number;
-  /** The new pipeline's collision settings. Each defaults to the app's. */
+  /** The collision settings. Each defaults to the app's. */
   relaxation?: number;
   particleRestitution?: number;
   particleDamping?: number;
@@ -62,11 +61,9 @@ export interface Sim {
   step(substeps: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
   reset(): void;
-  /** Runs only the binning stage and returns the spatial hash it built. */
-  readBinLists(): Promise<{ heads: Int32Array; links: Int32Array }>;
   /**
-   * New pipeline only: runs only a bin grid build and returns what it left
-   * behind, the particles in the order they sit in memory.
+   * Runs only a bin grid build and returns what it left behind, the particles
+   * in the order they sit in memory.
    */
   readBinGrid(): Promise<BinGridContents>;
   /**
@@ -108,13 +105,8 @@ afterEach(async () => {
   if (failed) throw failed.reason;
 });
 
-/** Every pipeline the simulation can run, for tests that judge them all alike. */
-export const PIPELINES: PipelineName[] = ['current', 'new'];
-
 export interface SimOptions {
-  /** Defaults to the app's default pipeline. */
-  pipeline?: PipelineName;
-  /** The new pipeline's smallest bin size. Defaults to the largest particle's diameter. */
+  /** The smallest bin size. Defaults to the largest particle's diameter. */
   minBinSize?: number;
 }
 
@@ -166,9 +158,7 @@ export async function createSim(
         bounds: BOUNDS,
         projection: target.projection,
         target: target.drawTarget,
-        pipeline: options.pipeline,
         minBinSize: options.minBinSize,
-        substepRate: SUBSTEP_RATE,
         seed: () =>
           particles.map((p) => ({
             x: p.x,
@@ -228,20 +218,6 @@ export async function createSim(
 
     reset() {
       checked(() => verlet.reset());
-    },
-
-    async readBinLists() {
-      checked(() => {
-        const encoder = device.createCommandEncoder();
-        verlet.computer.encodeBinning(encoder);
-        device.queue.submit([encoder.finish()]);
-      });
-
-      const heads = new Int32Array(
-        await checkedRead(() => readBuffer(device, verlet.computer.binBuffer))
-      );
-      const links = unpackBinLinks(await checkedRead(() => verlet.readParticleBuffer()));
-      return { heads, links };
     },
 
     readBinGrid() {

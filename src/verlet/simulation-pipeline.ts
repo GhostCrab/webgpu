@@ -1,20 +1,12 @@
 import { readBuffer } from '../read-buffer';
 import { BinGrid, BinGridSize } from './bin-grid';
-import {
-  compactInstanceLayout,
-  packCompactParticles,
-  Particle,
-  unpackCompactParticles,
-  unpackCompactParticlesInPlace
-} from './particle-layout';
-import type { Pipeline, PipelineOptions } from './pipeline';
+import type { DrawTarget } from '../simulation-target';
+import { packParticles, Particle, unpackParticles, unpackParticlesInPlace } from './particle-layout';
 import { computeShaderSource } from './shader-source';
-import type { StageTimer } from './verlet-bin-computer';
-import collideShaderCode from './shaders/compact-collide.wgsl';
-import constrainShaderCode from './shaders/compact-constrain.wgsl';
-import integrateShaderCode from './shaders/compact-integrate.wgsl';
-import velocityShaderCode from './shaders/compact-velocity.wgsl';
-import vertexShader from './shaders/compact-renderer.wgsl';
+import collideShaderCode from './shaders/collide.wgsl';
+import constrainShaderCode from './shaders/constrain.wgsl';
+import integrateShaderCode from './shaders/integrate.wgsl';
+import velocityShaderCode from './shaders/velocity.wgsl';
 import { VerletRenderer } from './verlet-renderer';
 
 const shaders = {
@@ -25,6 +17,33 @@ const shaders = {
 };
 
 type Stage = keyof typeof shaders;
+
+/**
+ * Times the stages of a substep with timestamp queries, for the benchmark.
+ * Nothing in the simulation needs one; without it a substep is encoded as usual.
+ */
+export interface StageTimer {
+  /** The timestamp writes for the compute pass that runs `stage`. */
+  timestampWrites(stage: string): GPUComputePassTimestampWrites;
+}
+
+export interface SimulationPipelineOptions {
+  /** The starting particles; their ids run from 0 in the order given. */
+  particles: Particle[];
+  /** Side of the square region of simulation space that particles may occupy. */
+  bounds: number;
+  /**
+   * The smallest bin size configured. The bin buffers are allocated for it,
+   * and bins are sized from the radii in use, never smaller.
+   */
+  minBinSize: number;
+  /** The simulation params uniform (the Params struct in common.wgsl). */
+  paramsBuffer: GPUBuffer;
+  /** Maps simulation space to clip space; a 4x4 matrix. */
+  projection: Float32Array;
+  /** The render pass configuration the particles are drawn into. */
+  target: DrawTarget;
+}
 
 /** What a bin grid build left behind, for tests of the build on its own. */
 export interface BinGridContents {
@@ -40,13 +59,13 @@ function largestRadius(particles: Particle[]): number {
 }
 
 /**
- * The new pipeline (spec #9), being built beside the current one: the compact
- * particle with an explicit velocity, and its colour in a buffer of its own.
- * Every substep builds the bin grid, which leaves the particles in bin order in
- * the other of two particle buffers, then the collision solve writes them
- * back to the first.
+ * Owns the particles on the GPU and the passes that advance and draw them.
+ * Internal to Verlet. A particle holds an explicit velocity, and its colour is
+ * in a buffer of its own. Every substep builds the bin grid, which leaves the
+ * particles in bin order in the other of two particle buffers, then the
+ * collision solve writes them back to the first.
  */
-export class CompactPipeline implements Pipeline {
+export class SimulationPipeline {
   private device: GPUDevice;
   private particleCount: number;
   /**
@@ -70,11 +89,11 @@ export class CompactPipeline implements Pipeline {
   private particleGroups: [GPUBindGroup, GPUBindGroup];
   private renderer: VerletRenderer;
 
-  constructor(device: GPUDevice, options: PipelineOptions) {
+  constructor(device: GPUDevice, options: SimulationPipelineOptions) {
     this.device = device;
     this.particleCount = options.particles.length;
 
-    const { particleData, colorData } = packCompactParticles(options.particles);
+    const { particleData, colorData } = packParticles(options.particles);
     const particleBuffer = () =>
       device.createBuffer({
         size: particleData.byteLength,
@@ -125,7 +144,7 @@ export class CompactPipeline implements Pipeline {
       this.pipelines = {} as Record<Stage, GPUComputePipeline>;
       for (const stage of Object.keys(shaders) as Stage[]) {
         this.pipelines[stage] = device.createComputePipeline({
-          label: `new pipeline: ${stage}`,
+          label: stage,
           layout,
           compute: {
             module: device.createShaderModule({ code: computeShaderSource(shaders[stage]) }),
@@ -153,8 +172,6 @@ export class CompactPipeline implements Pipeline {
       this.renderer = new VerletRenderer(device, {
         projection: options.projection,
         target: options.target,
-        vertexShader,
-        instanceLayout: compactInstanceLayout(2, 3, 4),
         colorBuffer: this.colorBuffer
       });
     } catch (error) {
@@ -172,19 +189,24 @@ export class CompactPipeline implements Pipeline {
     return this.particleBuffers[this.current];
   }
 
+  /**
+   * Replaces every particle, and sizes the bins for the largest radius among
+   * them. Particle ids must run from 0 in the order given.
+   */
   write(particles: Particle[]) {
-    const { particleData, colorData } = packCompactParticles(particles);
+    const { particleData, colorData } = packParticles(particles);
     this.device.queue.writeBuffer(this.particleBuffer, 0, particleData);
     this.device.queue.writeBuffer(this.colorBuffer, 0, colorData);
     this.binGrid.resize(largestRadius(particles));
   }
 
   /**
-   * Encodes one substep: a single compute pass, or with a timer one pass per
-   * stage. The stages run in the order spec #9 fixes: integrate, build the bin
-   * grid, solve collisions, the boundary, then the velocity update. With
-   * `collide` off the solve and the velocity update are skipped; the bin grid
-   * is still built.
+   * Encodes one substep, reading the simulation params uniform: a single
+   * compute pass, or with a timer one pass per stage carrying the timer's
+   * timestamp writes. The stages run in the order spec #9 fixes: integrate,
+   * build the bin grid, solve collisions, the boundary, then the velocity
+   * update. With `collide` off the solve and the velocity update are skipped;
+   * the bin grid is still built.
    */
   encodeSubstep(encoder: GPUCommandEncoder, collide: boolean, timer?: StageTimer) {
     this.encodeStages(encoder, [
@@ -209,7 +231,7 @@ export class CompactPipeline implements Pipeline {
       readBuffer(this.device, this.colorBuffer),
       this.binGrid.readStarts()
     ]);
-    return { grid, particles: unpackCompactParticlesInPlace(particles, colors), binStarts };
+    return { grid, particles: unpackParticlesInPlace(particles, colors), binStarts };
   }
 
   /**
@@ -279,14 +301,16 @@ export class CompactPipeline implements Pipeline {
     }
   }
 
+  /** Reads the particles back, ordered by particle id. */
   async read(): Promise<Particle[]> {
     const [particles, colors] = await Promise.all([
       readBuffer(this.device, this.particleBuffer),
       readBuffer(this.device, this.colorBuffer)
     ]);
-    return unpackCompactParticles(particles, colors);
+    return unpackParticles(particles, colors);
   }
 
+  /** Draws the particles into a pass matching the configured draw target. */
   draw(pass: GPURenderPassEncoder) {
     this.renderer.render(pass, this.particleBuffer, this.particleCount);
   }

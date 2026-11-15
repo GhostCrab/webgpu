@@ -1,14 +1,9 @@
-import { DEFAULT_SUBSTEP_RATE } from '../clock';
 import type { DrawTarget } from '../simulation-target';
 import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
-import { BinGridContents, CompactPipeline } from './compact-pipeline';
-import { CurrentPipeline } from './current-pipeline';
 import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
-import type { Pipeline } from './pipeline';
-import type { StageTimer, VerletBinComputer } from './verlet-bin-computer';
+import { BinGridContents, SimulationPipeline, StageTimer } from './simulation-pipeline';
 
-export type { StageTimer } from './verlet-bin-computer';
-export type { BinGridContents } from './compact-pipeline';
+export type { BinGridContents, StageTimer } from './simulation-pipeline';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
@@ -97,10 +92,7 @@ function withIds(particles: SeedParticle[]): Particle[] {
   return particles.map((p, id) => ({ ...p, id }));
 }
 
-/**
- * Everything outside the simulation that affects one frame of it. The
- * collision settings apply to the new pipeline only.
- */
+/** Everything outside the simulation that affects one frame of it. */
 export interface SimulationInput extends CollisionSettings {
   /** Where the click force acts, in simulation space. */
   clickPoint: [number, number];
@@ -121,12 +113,6 @@ export interface SimulationInput extends CollisionSettings {
   substepRate: number;
 }
 
-/**
- * The current pipeline, or the new one being built beside it (spec #9). The
- * choice goes when the new pipeline replaces the current one.
- */
-export type PipelineName = 'current' | 'new';
-
 export interface VerletOptions {
   /** Side of the square region of simulation space that particles may occupy. */
   bounds: number;
@@ -134,21 +120,13 @@ export interface VerletOptions {
   projection: Float32Array;
   /** The render pass configuration that draw() renders into. */
   target: DrawTarget;
-  /** Which pipeline advances and draws the particles. Defaults to the current one. */
-  pipeline?: PipelineName;
   /**
-   * The new pipeline's smallest bin size. Its bin buffers are allocated once,
-   * for bins this size; bins are one diameter of the largest particle in use
-   * wide, but never smaller. Defaults to the diameter of the largest particle
-   * of the first seeding. The current pipeline ignores it.
+   * The smallest bin size. The bin buffers are allocated once, for bins this
+   * size; bins are one diameter of the largest particle in use wide, but never
+   * smaller. Defaults to the diameter of the largest particle of the first
+   * seeding.
    */
   minBinSize?: number;
-  /**
-   * The substep rate the simulation will first be stepped at. The current
-   * pipeline holds velocity as a move per substep, so it converts the seed's
-   * velocities at this rate. Defaults to the app's default substep rate.
-   */
-  substepRate?: number;
   /**
    * Produces the starting particles, and is called again by reset(). It must
    * return the same number of particles each time. Defaults to a random
@@ -168,20 +146,16 @@ export class Verlet {
   private device: GPUDevice;
   private bounds: number;
   private seed: () => SeedParticle[];
-  private binSize: number;
   /** The furthest a particle may move in one substep: the smallest radius in use. */
   private speedLimit: number;
   private totalTime = 0;
-  /** The substep rate of the latest step, which the default seed scales to. */
-  private substepRate = DEFAULT_SUBSTEP_RATE;
 
   private paramsBuffer: GPUBuffer;
-  private pipeline: Pipeline;
+  private pipeline: SimulationPipeline;
 
   constructor(device: GPUDevice, options: VerletOptions) {
     this.device = device;
     this.bounds = options.bounds;
-    this.substepRate = options.substepRate ?? DEFAULT_SUBSTEP_RATE;
     this.seed =
       options.seed ??
       (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5 }));
@@ -189,15 +163,10 @@ export class Verlet {
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);
     }
-    if (!(this.substepRate > 0) || !Number.isFinite(this.substepRate)) {
-      throw new Error(`substep rate must be a positive number; got ${this.substepRate}`);
-    }
 
     const particles = this.seed();
     this.particleCount = particles.length;
     const radii = radiusRange(particles);
-    // A bin must be at least as wide as the largest particle.
-    this.binSize = 2 * radii.largest;
     this.speedLimit = radii.smallest;
 
     this.paramsBuffer = device.createBuffer({
@@ -222,14 +191,12 @@ export class Verlet {
       })
     );
 
-    const Pipeline = options.pipeline === 'new' ? CompactPipeline : CurrentPipeline;
     try {
-      this.pipeline = new Pipeline(device, {
+      this.pipeline = new SimulationPipeline(device, {
         particles: withIds(particles),
-        substepRate: this.substepRate,
         bounds: this.bounds,
-        binSize: this.binSize,
-        minBinSize: options.minBinSize ?? this.binSize,
+        // A bin must be at least as wide as the largest particle.
+        minBinSize: options.minBinSize ?? 2 * radii.largest,
         paramsBuffer: this.paramsBuffer,
         projection: options.projection,
         target: options.target
@@ -239,11 +206,6 @@ export class Verlet {
       this.paramsBuffer.destroy();
       throw error;
     }
-  }
-
-  /** The current pipeline's compute stage. Exposed for tests of its binning stage only. */
-  get computer(): VerletBinComputer {
-    return this.currentPipeline().computer;
   }
 
   /**
@@ -267,7 +229,6 @@ export class Verlet {
     }
     if (substeps === 0) return;
 
-    this.substepRate = substepRate;
     this.totalTime += substeps / substepRate;
     this.device.queue.writeBuffer(
       this.paramsBuffer,
@@ -306,53 +267,28 @@ export class Verlet {
       );
     }
     const radii = radiusRange(particles);
-    this.pipeline.write(withIds(particles), this.substepRate);
+    this.pipeline.write(withIds(particles));
     this.speedLimit = radii.smallest;
   }
 
   /** Reads the current particles back from the GPU, ordered by particle id. */
   readParticles(): Promise<Particle[]> {
-    return this.pipeline.read(this.substepRate);
+    return this.pipeline.read();
   }
 
-  /**
-   * Encodes only the new pipeline's bin grid build. Exposed for tests of the
-   * build on its own.
-   */
+  /** Encodes only a bin grid build. Exposed for tests of the build on its own. */
   encodeBinGridBuild(encoder: GPUCommandEncoder) {
-    this.compactPipeline().encodeBinGridBuild(encoder);
+    this.pipeline.encodeBinGridBuild(encoder);
   }
 
-  /**
-   * What the new pipeline's latest bin grid build left behind. Exposed for
-   * tests of the build on its own.
-   */
+  /** What the latest bin grid build left behind. Exposed for tests of the build on its own. */
   readBinGrid(): Promise<BinGridContents> {
-    return this.compactPipeline().readBinGrid();
-  }
-
-  /** The raw contents of the current pipeline's particle buffer. */
-  readParticleBuffer(): Promise<ArrayBuffer> {
-    return this.currentPipeline().readParticleBuffer();
+    return this.pipeline.readBinGrid();
   }
 
   /** Releases the GPU resources. The simulation cannot be used afterwards. */
   destroy() {
     this.paramsBuffer.destroy();
     this.pipeline.destroy();
-  }
-
-  private compactPipeline(): CompactPipeline {
-    if (!(this.pipeline instanceof CompactPipeline)) {
-      throw new Error('only the new pipeline has this bin grid');
-    }
-    return this.pipeline;
-  }
-
-  private currentPipeline(): CurrentPipeline {
-    if (!(this.pipeline instanceof CurrentPipeline)) {
-      throw new Error('only the current pipeline has this binning stage');
-    }
-    return this.pipeline;
   }
 }

@@ -8,7 +8,7 @@ import { BinGridContents, BOUNDS, createSim, seededScatter, TestParticle } from 
 
 const device = await getDevice();
 
-describe('sizing the new pipeline’s bin grid', () => {
+describe('sizing the bin grid', () => {
   test('makes bins one diameter of the largest radius in use wide, covering the bounds', () => {
     expect(sizeBinGrid({ bounds: 2160, largestRadius: 1.5, minBinSize: 1 })).toEqual({
       binSize: 3,
@@ -107,10 +107,10 @@ function crowdedBins(): TestParticle[] {
   return [...seededScatter(15000, 99), { x: 0, y: 0, radius: 50 }];
 }
 
-describe.skipIf(!device)('the new pipeline’s bin grid', () => {
+describe.skipIf(!device)('the bin grid', () => {
   test('holds every particle once, grouped by bin and in particle id order within each bin', async () => {
     const particles = crowdedBins();
-    const sim = await createSim(particles, { pipeline: 'new' });
+    const sim = await createSim(particles);
     const contents = await sim.readBinGrid();
     expect(contents.grid).toEqual(sizeBinGrid({ bounds: BOUNDS, largestRadius: 50, minBinSize: 100 }));
     expectBuilt(contents, particles.length);
@@ -119,7 +119,7 @@ describe.skipIf(!device)('the new pipeline’s bin grid', () => {
   test('gives the same order on repeated runs while particles move between bins', async () => {
     const runs = [];
     for (let run = 0; run < 2; run++) {
-      const sim = await createSim(crowdedBins(), { pipeline: 'new' });
+      const sim = await createSim(crowdedBins());
       // Three frames: the scatter's particles cross bins as they fall.
       sim.step(60);
       runs.push(await sim.readBinGrid());
@@ -147,7 +147,7 @@ describe.skipIf(!device)('the new pipeline’s bin grid', () => {
       [width / 2 + Math.floor(200 / binSize), height - 1],
       [0, 0]
     ];
-    const sim = await createSim([...outside, { x: 0, y: 0 }], { pipeline: 'new' });
+    const sim = await createSim([...outside, { x: 0, y: 0 }]);
     const contents = await sim.readBinGrid();
     expect(contents.grid).toEqual(grid);
     expectBuilt(contents, outside.length + 1);
@@ -163,7 +163,7 @@ describe.skipIf(!device)('the new pipeline’s bin grid', () => {
   test('builds a grid of millions of bins', async () => {
     // Bins 1 unit wide: 2160 x 2160, over 4.6 million.
     const particles = seededScatter(15000, 7).map((p) => ({ ...p, radius: 0.5 }));
-    const sim = await createSim(particles, { pipeline: 'new', minBinSize: 1 });
+    const sim = await createSim(particles, { minBinSize: 1 });
     const contents = await sim.readBinGrid();
     expect(contents.grid.binCount).toBe(2160 * 2160);
     expectBuilt(contents, particles.length);

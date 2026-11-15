@@ -1,5 +1,5 @@
 /**
- * The new pipeline's collision settings and their defaults. A pure module, so
+ * The collision settings and their defaults. A pure module, so
  * the simulation controls can use the defaults without loading the simulation.
  */
 
