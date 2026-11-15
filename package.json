@@ -1,7 +1,7 @@
 {
-    "name": "webgpu-seed",
+    "name": "webgpu-verlet",
     "version": "0.1.0",
-    "description": "🔺 A simple hello triangle example introducing WebGPU.",
+    "description": "A GPU-driven 2D Verlet particle simulation in WebGPU compute shaders.",
     "main": "dist/main.js",
     "engines": {
         "node": ">=21"
@@ -18,7 +18,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/alaingalvan/webgpu-seed.git"
+        "url": "git+https://github.com/GhostCrab/webgpu.git"
     },
     "keywords": [
         "webgpu",
@@ -31,9 +31,9 @@
     "author": "Alain Galvan",
     "license": "Unlicense",
     "bugs": {
-        "url": "https://github.com/alaingalvan/webgpu-seed/issues"
+        "url": "https://github.com/GhostCrab/webgpu/issues"
     },
-    "homepage": "https://github.com/alaingalvan/webgpu-seed#readme",
+    "homepage": "https://github.com/GhostCrab/webgpu#readme",
     "devDependencies": {
         "@types/node": "^24.19.2",
         "@webgpu/types": "^0.1.26",

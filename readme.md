@@ -1,60 +1,47 @@
-![Cover Art](https://alain.xyz/blog/raw-webgpu/assets/cover.jpg)
+# WebGPU Verlet Particle Simulation
 
-# 🔺 WebGPU Seed
+15,000 colliding balls in a circle, simulated entirely on the GPU with WebGPU compute shaders and steered with the mouse.
 
-[![License][license-img]][license-url]
-[![Unit Tests][travis-img]][travis-url]
+Each frame runs 20 substeps. In each substep the particles are sorted into a grid of bins, pushed apart where they overlap, kept inside the boundary circle, and advanced with Verlet integration. Collisions are resolved in four interleaved passes over the grid so that no two GPU threads move the same particle at once.
 
-A WebGPU repo you can use to get started with your own renderer.
+## Running it
 
-- [🔳 Codepen Example](https://codepen.io/alaingalvan/pen/GRgvLGw)
-
-- [💬 Blog Post](https://alain.xyz/blog/raw-webgpu)
-
-## Setup
-
-First install:
-
-- [Git](https://git-scm.com/)
-
-- [Node.js](https://nodejs.org/en/)
-
-- A Text Editor such as [Visual Studio Code](https://code.visualstudio.com/).
-
-Then type the following in any terminal your such as [VS Code's Integrated Terminal](https://code.visualstudio.com/docs/editor/integrated-terminal).
+You need [Node.js](https://nodejs.org/) 21 or newer and a browser with WebGPU (current Chrome or Edge).
 
 ```bash
-# 🐑 Clone the repo
-git clone https://github.com/alaingalvan/webgpu-seed
-
-# 💿 go inside the folder
-cd webgpu-seed
-
-# 🔨 Start installing dependencies, building, and running at localhost:8080
-npm start
+npm install
+npm run dev
 ```
 
-> Refer to [this blog post on designing web libraries and apps](https://alain.xyz/blog/designing-a-web-app) for more details on Node.js, packages, etc.
+Then open http://localhost:8080. Webpack rebuilds on save; refresh the page to see changes.
 
-## Project Layout
+## Controls
 
-As your project becomes more complex, you'll want to separate files and organize your application to something more akin to a game or renderer, check out this post on [game engine architecture](https://alain.xyz/blog/game-engine-architecture) and this one on [real time renderer architecture](https://alain.xyz/blog/realtime-renderer-architectures) for more details.
+| Input | Effect |
+| --- | --- |
+| Left mouse button | Pull particles toward the pointer |
+| Right mouse button | Push particles away from the pointer |
+| `R` | Reset |
+| `C` | Toggle collisions |
+| `T` | Toggle between stopping at the boundary and bouncing off it |
+| `P` | Pause |
+| `L` | Click lock: keep the force active after releasing the button |
+
+The same settings are in the panel at the top right.
+
+## Tests
 
 ```bash
-├─ 📂 node_modules/   # 👶 Dependencies
-│  ├─ 📁 gl-matrix      # ➕ Linear Algebra
-│  └─ 📁 ...            # 🕚 Other Dependencies (TypeScript, Webpack, etc.)
-├─ 📂 src/            # 🌟 Source Files
-│  ├─ 📄 index.html     #  📇 Main HTML file
-│  └─ 📄 renderer.ts    # 🔺 Triangle Renderer
-├─ 📄 .gitignore      # 👁️ Ignore certain files in git repo
-├─ 📄 package.json    # 📦 Node Package File
-├─ 📄 license.md      # ⚖️ Your License (Unlicense)
-└─ 📃readme.md        # 📖 Read Me!
+npm test
+npm run typecheck
 ```
 
+The tests run the real shaders in Node through [Dawn](https://github.com/dawn-gpu/node-webgpu), so they need a machine with a GPU; without one, the GPU tests skip. Both commands also run before every commit.
 
-[license-img]: https://img.shields.io/:license-unlicense-blue.svg?style=flat-square
-[license-url]: https://unlicense.org/
-[travis-img]: https://img.shields.io/travis/com/alaingalvan/webgpu-seed.svg?style=flat-square
-[travis-url]:https://www.travis-ci.com/github/alaingalvan/webgpu-seed
+## How the code is organised
+
+See [docs/architecture.md](docs/architecture.md) for the modules and the compute pipeline, and [docs/testing.md](docs/testing.md) for how the tests work. [GLOSSARY.md](GLOSSARY.md) defines the project's terms.
+
+## Credits
+
+Started from [webgpu-seed](https://github.com/alaingalvan/webgpu-seed) by Alain Galvan. Released under the [Unlicense](license.md).
