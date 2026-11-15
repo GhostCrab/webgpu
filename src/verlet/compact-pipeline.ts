@@ -7,6 +7,7 @@ import {
 } from './particle-layout';
 import type { Pipeline, PipelineOptions } from './pipeline';
 import { computeShaderSource } from './shader-source';
+import type { StageTimer } from './verlet-bin-computer';
 import constrainShaderCode from './shaders/compact-constrain.wgsl';
 import integrateShaderCode from './shaders/compact-integrate.wgsl';
 import vertexShader from './shaders/compact-renderer.wgsl';
@@ -114,22 +115,39 @@ export class CompactPipeline implements Pipeline {
   }
 
   /**
-   * Encodes one substep as a single compute pass. The stages run in the order
-   * spec #9 fixes: integrate, build the bin grid (#16), solve collisions
-   * (#17), the boundary, then the velocity update (#17).
+   * Encodes one substep: a single compute pass, or with a timer one pass per
+   * stage. The stages run in the order spec #9 fixes: integrate, build the bin
+   * grid (#16), solve collisions (#17), the boundary, then the velocity update
+   * (#17). The new pipeline has no collisions yet, so `collide` has no effect.
    */
-  encodeSubstep(encoder: GPUCommandEncoder) {
-    const pass = encoder.beginComputePass();
-    this.bindGroups.forEach((group, i) => pass.setBindGroup(i, group));
+  encodeSubstep(encoder: GPUCommandEncoder, _collide: boolean, timer?: StageTimer) {
+    const stages: Stage[] = ['integrate', 'constrain'];
     const perParticle = Math.ceil(this.particleCount / 64);
+    const dispatch = (pass: GPUComputePassEncoder, stage: Stage) => {
+      pass.setPipeline(this.pipelines[stage]);
+      pass.dispatchWorkgroups(perParticle);
+    };
 
-    pass.setPipeline(this.pipelines.integrate);
-    pass.dispatchWorkgroups(perParticle);
+    if (!timer) {
+      const pass = this.beginPass(encoder);
+      for (const stage of stages) dispatch(pass, stage);
+      pass.end();
+      return;
+    }
+    for (const stage of stages) {
+      const pass = this.beginPass(encoder, timer.timestampWrites(stage));
+      dispatch(pass, stage);
+      pass.end();
+    }
+  }
 
-    pass.setPipeline(this.pipelines.constrain);
-    pass.dispatchWorkgroups(perParticle);
-
-    pass.end();
+  private beginPass(
+    encoder: GPUCommandEncoder,
+    timestampWrites?: GPUComputePassTimestampWrites
+  ): GPUComputePassEncoder {
+    const pass = encoder.beginComputePass({ timestampWrites });
+    this.bindGroups.forEach((group, i) => pass.setBindGroup(i, group));
+    return pass;
   }
 
   async read(): Promise<Particle[]> {

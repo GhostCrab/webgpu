@@ -29,6 +29,7 @@ While spec #9's new pipeline is built beside the current one, the `pipeline` con
 
 - `step` advances by a whole number of substeps. Each covers `1 / input.substepRate` seconds; the substep rate is the only thing that sets a substep's length, and how substeps are split between calls does not change the result.
 - `step` writes the params uniform once with `queue.writeBuffer`, then encodes the substeps. The write takes effect when the encoder is submitted, so call `step` at most once per submitted encoder.
+- `step` takes an optional stage timer, used only by the benchmark (`bench/`). With one, each stage of a substep is encoded as its own compute pass carrying the timer's timestamp writes; without one, a substep is a single compute pass. Both pipelines honour it.
 - The current pipeline's physics is position Verlet, so it holds velocity as a displacement per substep, converting at the interface at the latest substep rate. Changing the substep rate while running therefore rescales every particle's velocity at that moment. The new pipeline holds velocity explicitly.
 - Starting particles come from a `seed` function (default: `scatter`, a random scatter with an injectable random source). `reset()` calls it again. The particle count and the bin size are derived from the first seeding and are fixed afterwards.
 

@@ -1,5 +1,6 @@
 import type { DrawTarget } from '../simulation-target';
 import type { Particle } from './particle-layout';
+import type { StageTimer } from './verlet-bin-computer';
 
 /**
  * One way of advancing and drawing the particles, internal to Verlet. While
@@ -9,8 +10,12 @@ import type { Particle } from './particle-layout';
 export interface Pipeline {
   /** Replaces every particle. Particle ids run from 0 in the order given. */
   write(particles: Particle[], substepRate: number): void;
-  /** Encodes one substep, reading the simulation params uniform. */
-  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean): void;
+  /**
+   * Encodes one substep, reading the simulation params uniform. Without a
+   * timer it is a single compute pass; with one, each stage gets a pass of its
+   * own carrying the timer's timestamp writes.
+   */
+  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean, timer?: StageTimer): void;
   /** Reads the particles back, ordered by particle id. */
   read(substepRate: number): Promise<Particle[]>;
   /** Draws the particles into a pass matching the configured draw target. */

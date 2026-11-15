@@ -2,7 +2,7 @@ import { readBuffer } from '../read-buffer';
 import { packParticles, Particle, particleInstanceLayout, unpackParticles } from './particle-layout';
 import type { Pipeline, PipelineOptions } from './pipeline';
 import vertexShader from './shaders/verlet-renderer.wgsl';
-import { VerletBinComputer } from './verlet-bin-computer';
+import { StageTimer, VerletBinComputer } from './verlet-bin-computer';
 import { VerletRenderer } from './verlet-renderer';
 
 /**
@@ -60,8 +60,8 @@ export class CurrentPipeline implements Pipeline {
     this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles, substepRate));
   }
 
-  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean) {
-    this.computer.encodeSubstep(encoder, collide);
+  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean, timer?: StageTimer) {
+    this.computer.encodeSubstep(encoder, collide, timer);
   }
 
   async read(substepRate: number): Promise<Particle[]> {

@@ -8,5 +8,5 @@
     "declaration": false,
     "noEmit": true
   },
-  "include": ["./**/*.ts", "../vitest.config.mts", "../definitions.d.ts", "../src/**/*"]
+  "include": ["./**/*.ts", "../vitest.config.mts", "../definitions.d.ts", "../src/**/*", "../bench/**/*", "../vitest.bench.config.mts"]
 }

@@ -4,7 +4,9 @@ import { CompactPipeline } from './compact-pipeline';
 import { CurrentPipeline } from './current-pipeline';
 import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
 import type { Pipeline } from './pipeline';
-import type { VerletBinComputer } from './verlet-bin-computer';
+import type { StageTimer, VerletBinComputer } from './verlet-bin-computer';
+
+export type { StageTimer } from './verlet-bin-computer';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
@@ -226,8 +228,12 @@ export class Verlet {
    *
    * The input applies to every one of them. It reaches the GPU when the
    * encoder is submitted, so call this at most once per submitted encoder.
+   *
+   * A timer, used by the benchmark, times each stage of every substep with
+   * timestamp queries. It changes how the work is split into passes, not what
+   * the substeps do.
    */
-  step(encoder: GPUCommandEncoder, substeps: number, input: SimulationInput) {
+  step(encoder: GPUCommandEncoder, substeps: number, input: SimulationInput, timer?: StageTimer) {
     if (!Number.isInteger(substeps) || substeps < 0) {
       throw new Error(`substeps must be a whole number, 0 or more; got ${substeps}`);
     }
@@ -255,7 +261,7 @@ export class Verlet {
     );
 
     for (let i = 0; i < substeps; i++) {
-      this.pipeline.encodeSubstep(encoder, input.collide);
+      this.pipeline.encodeSubstep(encoder, input.collide, timer);
     }
   }
 

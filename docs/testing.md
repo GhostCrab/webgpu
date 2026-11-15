@@ -39,6 +39,20 @@ The aggregate ranges in `simulation.test.ts` are measured values. If a deliberat
 
 A claim about what the simulation does ("this particle ends outside the boundary circle") is a guess until it has run. Write a throwaway scenario through the harness in a new file under `test/`, run that one file, report what it printed, and delete the file unless it is becoming a real test. This applies to research and review as much as to implementation.
 
+## Benchmark
+
+```bash
+npm run bench
+BENCH_NO_TIMESTAMPS=1 npm run bench           # as on a device without timestamp queries
+```
+
+`bench/stage-timings.bench.ts` measures where the time in a substep goes, at 15,000, 500,000 and 1,000,000 particles. It is a measuring tool, not a test: it asserts nothing and `npm test` does not run it. Vitest runs it only because Vitest already loads WGSL and the WebGPU globals; it has its own config, `vitest.bench.config.mts`.
+
+- It builds each scene through the simulation interface, lets it settle for three seconds of simulated time, then advances it in frame-sized command buffers, outside any display loop, and prints a table of milliseconds per substep.
+- With timestamp queries, `Verlet.step` is given a stage timer and runs each stage of a substep in its own compute pass with timestamp writes; the table shows each stage's GPU time and their sum. The simulation never asks for the feature itself.
+- Without them, it prints a notice and only the wall-clock time per substep.
+- It needs a GPU and prints the adapter and runtime it ran on. Record those with any numbers you report; baselines are posted on the spec issue (#9).
+
 ## Pure modules
 
 `clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `binGrid`, `scatter` and the particle layout are tested without a GPU.

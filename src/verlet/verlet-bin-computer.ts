@@ -43,6 +43,15 @@ export function binGrid(bounds: number, binSize: number): BinGrid {
   return { binSize: size, width, height, binCount: width * height };
 }
 
+/**
+ * Times the stages of a substep with timestamp queries, for the benchmark.
+ * Nothing in the simulation needs one; without it a substep is encoded as usual.
+ */
+export interface StageTimer {
+  /** The timestamp writes for the compute pass that runs `stage`. */
+  timestampWrites(stage: string): GPUComputePassTimestampWrites;
+}
+
 export interface BinComputerOptions {
   /** Side of the square area the bins cover, centred on the origin. */
   bounds: number;
@@ -144,42 +153,75 @@ export class VerletBinComputer {
     ];
   }
 
-  /** Encodes one substep as a single compute pass. */
-  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean) {
-    const pass = this.beginPass(encoder);
+  /**
+   * Encodes one substep. Without a timer it is a single compute pass; with one,
+   * each stage gets a pass of its own carrying the timer's timestamp writes.
+   */
+  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean, timer?: StageTimer) {
     const perParticle = Math.ceil(this.particleCount / 64);
+    const stages: [string, (pass: GPUComputePassEncoder) => void][] = [];
 
     if (collide) {
-      this.dispatchBinning(pass);
+      stages.push(['binning', (pass) => this.dispatchBinning(pass)]);
     }
 
-    pass.setPipeline(this.pipelines.applyForces);
-    pass.dispatchWorkgroups(perParticle);
-
-    if (collide) {
-      // A collide pass moves particles in the 3x3 bins around each bin it
-      // visits, so it visits only every second bin in x and y. Four passes,
-      // with collideIncrement shifting the offset between them, cover all bins.
-      const x = Math.ceil(this.grid.width / 2 / 16);
-      const y = Math.ceil(this.grid.height / 2 / 16);
-      for (let i = 0; i < 4; i++) {
-        pass.setPipeline(this.pipelines.collide);
-        pass.dispatchWorkgroups(x, y);
-
-        pass.setPipeline(this.pipelines.collideIncrement);
-        pass.dispatchWorkgroups(1);
+    stages.push([
+      'apply forces',
+      (pass) => {
+        pass.setPipeline(this.pipelines.applyForces);
+        pass.dispatchWorkgroups(perParticle);
       }
+    ]);
+
+    if (collide) {
+      stages.push([
+        'collide',
+        (pass) => {
+          // A collide pass moves particles in the 3x3 bins around each bin it
+          // visits, so it visits only every second bin in x and y. Four passes,
+          // with collideIncrement shifting the offset between them, cover all bins.
+          const x = Math.ceil(this.grid.width / 2 / 16);
+          const y = Math.ceil(this.grid.height / 2 / 16);
+          for (let i = 0; i < 4; i++) {
+            pass.setPipeline(this.pipelines.collide);
+            pass.dispatchWorkgroups(x, y);
+
+            pass.setPipeline(this.pipelines.collideIncrement);
+            pass.dispatchWorkgroups(1);
+          }
+        }
+      ]);
     }
 
-    pass.setPipeline(this.pipelines.integrate);
-    pass.dispatchWorkgroups(perParticle);
+    stages.push([
+      'integrate',
+      (pass) => {
+        pass.setPipeline(this.pipelines.integrate);
+        pass.dispatchWorkgroups(perParticle);
+      }
+    ]);
 
     // After the integrate, so that no substep ends with a particle outside
     // the boundary circle.
-    pass.setPipeline(this.pipelines.constrain);
-    pass.dispatchWorkgroups(perParticle);
+    stages.push([
+      'constrain',
+      (pass) => {
+        pass.setPipeline(this.pipelines.constrain);
+        pass.dispatchWorkgroups(perParticle);
+      }
+    ]);
 
-    pass.end();
+    if (!timer) {
+      const pass = this.beginPass(encoder);
+      for (const [, dispatch] of stages) dispatch(pass);
+      pass.end();
+      return;
+    }
+    for (const [stage, dispatch] of stages) {
+      const pass = this.beginPass(encoder, timer.timestampWrites(stage));
+      dispatch(pass);
+      pass.end();
+    }
   }
 
   /** Encodes only the binning stage, leaving the bin lists in the buffers. */
@@ -189,8 +231,11 @@ export class VerletBinComputer {
     pass.end();
   }
 
-  private beginPass(encoder: GPUCommandEncoder): GPUComputePassEncoder {
-    const pass = encoder.beginComputePass();
+  private beginPass(
+    encoder: GPUCommandEncoder,
+    timestampWrites?: GPUComputePassTimestampWrites
+  ): GPUComputePassEncoder {
+    const pass = encoder.beginComputePass({ timestampWrites });
     this.bindGroups.forEach((group, i) => pass.setBindGroup(i, group));
     return pass;
   }
