@@ -41,6 +41,7 @@ test('params are packed where the shader struct puts them', () => {
     totalTime: 1,
     deltaTime: 2,
     constrainRadius: 3,
+    constrainCenter: [8, 9],
     boxDim: 4,
     constrainType: 1,
     clickPoint: [5, 6, 7]
@@ -52,6 +53,7 @@ test('params are packed where the shader struct puts them', () => {
   expect(floats[offset.totalTime]).toBe(1);
   expect(floats[offset.deltaTime]).toBe(2);
   expect(floats[offset.constrainRadius]).toBe(3);
+  expect([...floats.subarray(offset.constrainCenter, offset.constrainCenter + 2)]).toEqual([8, 9]);
   expect(floats[offset.boxDim]).toBe(4);
   expect(new Uint32Array(buffer)[offset.constrainType]).toBe(1);
   expect([...floats.subarray(offset.clickPoint, offset.clickPoint + 3)]).toEqual([5, 6, 7]);

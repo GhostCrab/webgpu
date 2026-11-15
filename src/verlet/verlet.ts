@@ -97,6 +97,8 @@ export interface SimulationInput {
   clickForce: number;
   /** Radius of the boundary circle. */
   constrainRadius: number;
+  /** Centre of the boundary circle, in simulation space. Defaults to the origin. */
+  constrainCenter?: [number, number];
   /** True stops particles at the boundary; false bounces them off it. */
   classicConstrain: boolean;
   /** Whether particles collide with each other. */
@@ -185,6 +187,7 @@ export class Verlet {
         totalTime: 0,
         deltaTime: 0,
         constrainRadius: this.bounds / 2,
+        constrainCenter: [0, 0],
         boxDim: this.bounds,
         constrainType: 1,
         clickPoint: [0, 0, 0]
@@ -229,6 +232,7 @@ export class Verlet {
         totalTime: this.totalTime,
         deltaTime: frameTime / this.substeps,
         constrainRadius: input.constrainRadius,
+        constrainCenter: input.constrainCenter ?? [0, 0],
         boxDim: this.bounds,
         constrainType: input.classicConstrain ? 0 : 1,
         clickPoint: [input.clickPoint[0], input.clickPoint[1], input.clickForce]

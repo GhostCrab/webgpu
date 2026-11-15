@@ -40,8 +40,8 @@ Dispatched in this order:
 1. `bin-clear`, `bin-link-clear`, `bin-set` build the bin grid.
 2. `apply-forces` applies gravity (+y, scaled by radius), or the click force when one is active.
 3. `collide` then `collideIncrement`, four times.
-4. `constrain` keeps particles inside the boundary circle (two modes, selected by `params.constrainType`).
-5. `integrate` takes the Verlet step, then clears `accel` and `binLink`.
+4. `integrate` takes the Verlet step, then clears `accel` and `binLink`.
+5. `constrain` places any particle past the boundary circle back on it, so no substep ends with a particle outside. Two modes, selected by `params.constrainType`: the classic constrain removes outward velocity and damps the rest by 0.95; the reflective constrain reflects velocity only when the particle is moving outward, keeping 0.8 of the normal component and all of the tangential one. Both keep the particle's own velocity rather than deriving it from the distance moved, and both use `params.constrainCenter`.
 
 Steps 1 and 3 are skipped when collision is off.
 

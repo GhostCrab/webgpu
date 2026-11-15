@@ -112,6 +112,8 @@ export interface ParamsValues {
   /** Time covered by one substep, in seconds. */
   deltaTime: number;
   constrainRadius: number;
+  /** Centre of the boundary circle. */
+  constrainCenter: [number, number];
   boxDim: number;
   /** 0: classic constrain, 1: reflective constrain. */
   constrainType: number;
@@ -122,7 +124,11 @@ export interface ParamsValues {
 /** Lays out the contents of the simulation params uniform. */
 export function packParams(values: ParamsValues): ArrayBuffer {
   const view = makeStructuredView(structs.Params);
-  view.set({ ...values, clickPoint: [...values.clickPoint, 0] });
+  view.set({
+    ...values,
+    constrainCenter: [...values.constrainCenter, 0, 0],
+    clickPoint: [...values.clickPoint, 0]
+  });
   return view.arrayBuffer;
 }
 

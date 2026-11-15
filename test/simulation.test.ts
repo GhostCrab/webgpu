@@ -113,6 +113,75 @@ describe.skipIf(!device)('the boundary circle', () => {
     expect(Math.abs(p.y - p.prevY)).toBeLessThan(0.01);
   });
 
+  test.each([true, false])(
+    'a particle crossing the boundary circle ends the substep on it, not past it (classic: %s)',
+    async (classicConstrain) => {
+      // Moving +x at 0.5 per substep, it crosses the edge by 0.25 on the
+      // frame's last substep, so the frame ends straight after the crossing.
+      const sim = await createSim([{ x: edge - 9.75, y: 0, prevX: edge - 10.25, prevY: 0 }]);
+      sim.step(1, { classicConstrain });
+      const [p] = await sim.read();
+      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+    }
+  );
+
+  test('reflective constrain: a head-on impact returns the particle inward at 0.8 of its speed', async () => {
+    // Moving +x at 0.5 per substep, it crosses the edge by 0.25 on the tenth
+    // substep, then travels inward for the remaining ten.
+    const sim = await createSim([{ x: edge - 4.75, y: 0, prevX: edge - 5.25, prevY: 0 }]);
+    sim.step(1);
+    const [p] = await sim.read();
+    expect(p.x - p.prevX).toBeCloseTo(-0.4, 3);
+    expect(p.x).toBeCloseTo(edge - 4, 2);
+  });
+
+  test('reflective constrain: a glancing impact keeps its speed along the boundary', async () => {
+    // At the bottom of the circle, moving +x at 0.5 and outward (+y) at 0.2 per
+    // substep. Gravity acts along the normal here, so it leaves the speed along
+    // the boundary alone; the boundary turns by under a degree over the frame.
+    const sim = await createSim([{ x: 0, y: edge - 0.1, prevX: -0.5, prevY: edge - 0.3 }]);
+    sim.step(1);
+    const [p] = await sim.read();
+    expect(p.x - p.prevX).toBeCloseTo(0.5, 2);
+    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+  });
+
+  test('reflective constrain: a particle outside the circle and moving inward is not reflected', async () => {
+    const sim = await createSim([{ x: edge + 5, y: 0, prevX: edge + 5.5, prevY: 0 }]);
+    sim.step(1);
+    const [p] = await sim.read();
+    expect(p.x - p.prevX).toBeCloseTo(-0.5, 3);
+    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+  });
+
+  test.each([true, false])(
+    'a particle far outside the circle returns to the edge without crossing it (classic: %s)',
+    async (classicConstrain) => {
+      // GitHub issue #2: at rest 400 past the edge, it was flung to the far side.
+      const sim = await createSim([{ x: 0, y: 900 }]);
+      sim.step(1, { constrainRadius: 500, classicConstrain });
+      const [p] = await sim.read();
+      expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
+      expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
+      expect(Math.hypot(p.x - p.prevX, p.y - p.prevY)).toBeLessThan(0.01);
+    }
+  );
+
+  test.each([true, false])(
+    'the boundary circle can be centred away from the origin (classic: %s)',
+    async (classicConstrain) => {
+      // Falling at 0.5 per substep onto the bottom of a circle centred at (400, 0).
+      const sim = await createSim([{ x: 400, y: 490, prevX: 400, prevY: 489.5 }]);
+      sim.step(1, { constrainCenter: [400, 0], constrainRadius: 500, classicConstrain });
+      const [p] = await sim.read();
+      expect(Math.hypot(p.x - 400, p.y)).toBeLessThanOrEqual(500 - RADIUS + 0.001);
+      expect(p.y).toBeGreaterThan(490);
+      // The boundary's normal at the bottom is vertical, so nothing moves it sideways.
+      expect(p.x).toBeCloseTo(400, 3);
+      expect(p.x - p.prevX).toBeCloseTo(0, 3);
+    }
+  );
+
   test('a smaller constrain radius moves the edge', async () => {
     const sim = await createSim([{ x: 0, y: 490 }]);
     sim.step(126, { constrainRadius: 500, classicConstrain: true });
@@ -145,8 +214,8 @@ describe.skipIf(!device)('binning', () => {
 // visited in, and therefore float rounding, differs between runs. Individual
 // positions are not reproducible; these aggregate measures are. The ranges are
 // measured values, widened to several times the run-to-run spread seen across
-// four runs. The same ranges held on the code before the 2026-11 refactor, for
-// an equivalent seeded start.
+// four runs, and were last re-measured when the reflective constrain became a
+// true bounce.
 describe.skipIf(!device)('15,000 seeded particles', () => {
   test('after one frame the aggregate state matches the recorded baseline', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
@@ -154,15 +223,21 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
-    expect(stats.centreX).toBeCloseTo(-2.565, 1); // within 0.05
-    expect(stats.centreY).toBeCloseTo(3.053, 1);
-    expect(stats.meanDistance).toBeCloseTo(786.036, 1);
-    expect(stats.meanSpeed).toBeCloseTo(0.2539, 2); // within 0.005
+    // Measured after the reflective constrain became a true bounce (2026-11):
+    // the scatter's corners start outside the circle and are placed on it.
+    expect(stats.centreX).toBeCloseTo(-2.407, 1); // within 0.05
+    expect(stats.centreY).toBeCloseTo(3.044, 1);
+    expect(stats.meanDistance).toBeCloseTo(786.322, 1);
+    expect(stats.meanSpeed).toBeCloseTo(0.4306, 2); // within 0.005
   });
 
+  // Under the classic constrain. The reflective constrain no longer damps all
+  // motion at the boundary, and without a speed limit a few particles there
+  // reach 10 to 20 units per substep and tunnel, so that pile does not come
+  // to rest. With a speed limit of the radius per substep it does.
   test('settles into a pile at the bottom of the circle', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(300);
+    sim.step(300, { classicConstrain: true });
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
@@ -170,15 +245,15 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     expect(stats.maxDistance).toBeLessThan(DEFAULT_CONSTRAIN_RADIUS - RADIUS + 0.1);
     // At rest.
     expect(stats.meanSpeed).toBeLessThan(0.05);
-    // Piled at the bottom (+y), roughly centred. Measured: centreY 968.5 to 969.2.
-    expect(stats.centreY).toBeGreaterThan(966);
-    expect(stats.centreY).toBeLessThan(972);
+    // Piled at the bottom (+y), roughly centred. Measured: centreY 959.3 to 959.8.
+    expect(stats.centreY).toBeGreaterThan(956);
+    expect(stats.centreY).toBeLessThan(963);
     expect(Math.abs(stats.centreX)).toBeLessThan(40);
-    // Measured: 1005.2 to 1009.4.
-    expect(stats.meanDistance).toBeGreaterThan(1001);
-    expect(stats.meanDistance).toBeLessThan(1014);
-    // Collisions resolved to a small residual overlap. Measured: mean 0.088 to
-    // 0.094, max 0.72 to 0.82, about 41,700 touching pairs.
+    // Measured: 1007.7 to 1010.1.
+    expect(stats.meanDistance).toBeGreaterThan(1003);
+    expect(stats.meanDistance).toBeLessThan(1015);
+    // Collisions resolved to a small residual overlap. Measured: mean 0.091 to
+    // 0.095, max 0.75 to 0.79, about 41,000 touching pairs.
     expect(stats.meanOverlap).toBeLessThan(0.13);
     expect(stats.maxOverlap).toBeLessThan(1.5);
     expect(stats.overlapPairs).toBeGreaterThan(39000);

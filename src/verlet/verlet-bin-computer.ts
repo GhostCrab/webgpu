@@ -171,10 +171,12 @@ export class VerletBinComputer {
       }
     }
 
-    pass.setPipeline(this.pipelines.constrain);
+    pass.setPipeline(this.pipelines.integrate);
     pass.dispatchWorkgroups(perParticle);
 
-    pass.setPipeline(this.pipelines.integrate);
+    // After the integrate, so that no substep ends with a particle outside
+    // the boundary circle.
+    pass.setPipeline(this.pipelines.constrain);
     pass.dispatchWorkgroups(perParticle);
 
     pass.end();
