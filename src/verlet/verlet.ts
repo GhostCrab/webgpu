@@ -1,109 +1,248 @@
-import { stepCount } from "../renderer";
-import { packParticles, Particle } from "./particle-layout";
-import { VerletBinComputer } from "./verlet-bin-computer";
-import { VerletRenderer } from "./verlet-renderer";
+import {
+  packParams,
+  packParticles,
+  PARAMS_BYTES,
+  Particle,
+  unpackParticles
+} from './particle-layout';
+import { VerletBinComputer } from './verlet-bin-computer';
+import { VerletRenderer } from './verlet-renderer';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
 }
 
-function HSVtoRGB(h: number, s: number, v: number) {
-  let r: number, g: number, b: number, 
-      i: number, f: number, p: number, 
-      q: number, t: number;
-
-  i = Math.floor(h * 6);
-  f = h * 6 - i;
-  p = v * (1 - s);
-  q = v * (1 - f * s);
-  t = v * (1 - (1 - f) * s);
+function HSVtoRGB(h: number, s: number, v: number): [number, number, number] {
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s);
+  const q = v * (1 - f * s);
+  const t = v * (1 - (1 - f) * s);
   switch (i % 6) {
-      case 0: r = v, g = t, b = p; break;
-      case 1: r = q, g = v, b = p; break;
-      case 2: r = p, g = v, b = t; break;
-      case 3: r = p, g = q, b = v; break;
-      case 4: r = t, g = p, b = v; break;
-      case 5: r = v, g = p, b = q; break;
+    case 0: return [v, t, p];
+    case 1: return [q, v, p];
+    case 2: return [p, v, t];
+    case 3: return [p, q, v];
+    case 4: return [t, p, v];
+    default: return [v, p, q];
   }
-
-  return { r, g, b };
 }
 
-export class Verlet {
-  objectCount: number;
-
-  renderer: VerletRenderer;
-  computer: VerletBinComputer;
-
+export interface ScatterOptions {
+  count: number;
+  /** Particles are scattered over a square of this side, centred on the origin. */
   bounds: number;
-  buffer: GPUBuffer;
+  radius: number;
+  /** Substeps per frame; the starting velocity is scaled to it. */
+  substeps: number;
+  /** Source of numbers in [0, 1). Defaults to Math.random. */
+  random?: () => number;
+}
 
-  minRadius = 1.5;
-  maxRadius = this.minRadius;
-  // maxRadius = 150;
+/**
+ * The default starting state: a uniform scatter, each particle with a small
+ * random velocity and a shade of one random hue.
+ */
+export function scatter(options: ScatterOptions): Particle[] {
+  const { count, bounds, radius, substeps } = options;
+  const random = options.random ?? Math.random;
 
-  constructor(bounds: number, globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
-    this.bounds = bounds;
+  const hue = random();
+  let lerpStart = random();
+  let lerpEnd = random();
+  if (lerpEnd < lerpStart) {
+    [lerpStart, lerpEnd] = [lerpEnd, lerpStart];
+  }
 
-    this.objectCount = 15000;
+  const particles: Particle[] = [];
+  for (let i = 0; i < count; i++) {
+    const x = random() * bounds - bounds / 2;
+    const y = random() * bounds - bounds / 2;
+    const prevX = x + ((random() - 0.5) * 12) / substeps;
+    const prevY = y + ((random() - 0.5) * 12) / substeps;
+    const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, random()), 1);
+    particles.push({ x, y, prevX, prevY, radius, rgb });
+  }
+  return particles;
+}
 
-    this.renderer = new VerletRenderer(globalUniformBindGroupLayout, device);
-    this.computer = new VerletBinComputer(globalUniformBindGroupLayout, device);
+/** Everything outside the simulation that affects one frame of it. */
+export interface SimulationInput {
+  /** Where the click force acts, in simulation space. */
+  clickPoint: [number, number];
+  /** Positive pulls toward the click point, negative pushes away, 0 leaves gravity on. */
+  clickForce: number;
+  /** Radius of the boundary circle. */
+  constrainRadius: number;
+  /** True stops particles at the boundary; false bounces them off it. */
+  classicConstrain: boolean;
+  /** Whether particles collide with each other. */
+  collide: boolean;
+}
 
-    this.initBuffers(device);
+export interface VerletOptions {
+  /** Side of the square region of simulation space that particles may occupy. */
+  bounds: number;
+  /** Maps simulation space to clip space; a 4x4 matrix. */
+  projection: Float32Array;
+  /** Format of the colour target that draw() renders into. */
+  targetFormat: GPUTextureFormat;
+  /** Substeps per frame. Defaults to 20. */
+  substeps?: number;
+  /**
+   * Produces the starting particles, and is called again by reset(). It must
+   * return the same number of particles each time. Defaults to a random
+   * scatter of 15,000 particles of radius 1.5.
+   */
+  seed?: () => Particle[];
+}
+
+/**
+ * The particle simulation: owns the particles on the GPU, advances them and
+ * draws them.
+ */
+export class Verlet {
+  readonly particleCount: number;
+  readonly substeps: number;
+
+  /** The compute stage. Exposed for tests of the binning stage only. */
+  readonly computer: VerletBinComputer;
+
+  private device: GPUDevice;
+  private bounds: number;
+  private seed: () => Particle[];
+  private binSize: number;
+  private totalTime = 0;
+
+  private particleBuffer: GPUBuffer;
+  private paramsBuffer: GPUBuffer;
+  private renderer: VerletRenderer;
+
+  constructor(device: GPUDevice, options: VerletOptions) {
+    this.device = device;
+    this.bounds = options.bounds;
+    this.substeps = options.substeps ?? 20;
+    this.seed =
+      options.seed ??
+      (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5, substeps: this.substeps }));
+
+    const particles = this.seed();
+    this.particleCount = particles.length;
+    // A bin must be at least as wide as the largest particle.
+    this.binSize = 2 * Math.max(...particles.map((p) => p.radius));
+
+    const data = packParticles(particles);
+    this.particleBuffer = device.createBuffer({
+      size: data.byteLength,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.VERTEX |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC
+    });
+    device.queue.writeBuffer(this.particleBuffer, 0, data);
+
+    this.paramsBuffer = device.createBuffer({
+      size: PARAMS_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    // step() rewrites this every frame; until then the bounds must already be
+    // valid, because binning reads them.
+    device.queue.writeBuffer(
+      this.paramsBuffer,
+      0,
+      packParams({
+        totalTime: 0,
+        deltaTime: 0,
+        constrainRadius: this.bounds / 2,
+        boxDim: this.bounds,
+        constrainType: 1,
+        clickPoint: [0, 0, 0]
+      })
+    );
+
+    this.computer = new VerletBinComputer(device, {
+      bounds: this.bounds,
+      binSize: this.binSize,
+      particleCount: this.particleCount,
+      particleBuffer: this.particleBuffer,
+      paramsBuffer: this.paramsBuffer
+    });
+
+    this.renderer = new VerletRenderer(device, {
+      projection: options.projection,
+      targetFormat: options.targetFormat
+    });
   }
 
   /**
-   * A uniform scatter over the bounds: each particle gets a small random
-   * velocity and a shade of one random hue.
+   * Advances the simulation by one frame of `frameTime` seconds, as
+   * `substeps` equal substeps, encoding the work into `encoder`.
+   *
+   * The input applies to the whole frame. It reaches the GPU when the encoder
+   * is submitted, so call this at most once per submitted encoder.
    */
-  scatter(): Particle[] {
-    let hue = Math.random();
-    let lerpStart = Math.random();
-    let lerpEnd = Math.random();
-    if (lerpEnd < lerpStart) {
-      let temp = lerpEnd;
-      lerpEnd = lerpStart;
-      lerpStart = temp;
+  step(encoder: GPUCommandEncoder, frameTime: number, input: SimulationInput) {
+    this.totalTime += frameTime;
+    this.device.queue.writeBuffer(
+      this.paramsBuffer,
+      0,
+      packParams({
+        totalTime: this.totalTime,
+        deltaTime: frameTime / this.substeps,
+        constrainRadius: input.constrainRadius,
+        boxDim: this.bounds,
+        constrainType: input.classicConstrain ? 0 : 1,
+        clickPoint: [input.clickPoint[0], input.clickPoint[1], input.clickForce]
+      })
+    );
+
+    for (let i = 0; i < this.substeps; i++) {
+      this.computer.encodeSubstep(encoder, input.collide);
     }
-
-    const particles: Particle[] = [];
-    for (let i = 0; i < this.objectCount; i++) {
-      const x = (Math.random() * this.bounds) - (this.bounds / 2);
-      const y = (Math.random() * this.bounds) - (this.bounds / 2);
-      const prevX = x + (((Math.random() - 0.5) * 12) / stepCount);
-      const prevY = y + (((Math.random() - 0.5) * 12) / stepCount);
-
-      const { r, g, b } = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, Math.random()), 1);
-      const radius = lerp(this.minRadius, this.maxRadius, Math.random());
-
-      particles.push({ x, y, prevX, prevY, radius, rgb: [r, g, b] });
-    }
-    return particles;
   }
 
-  initBuffers(device: GPUDevice) {
-    const data = packParticles(this.scatter());
-    this.buffer = device.createBuffer({
-      size: data.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-      mappedAtCreation: true,
+  /**
+   * Draws the particles. The pass must have a 4x multisampled colour target
+   * of the configured format and a depth24plus-stencil8 attachment.
+   */
+  draw(pass: GPURenderPassEncoder) {
+    this.renderer.render(pass, this.particleBuffer, this.particleCount);
+  }
+
+  /** Puts the particles back to a fresh starting state from the seed. */
+  reset() {
+    const particles = this.seed();
+    if (particles.length !== this.particleCount) {
+      throw new Error(
+        `seed returned ${particles.length} particles; expected ${this.particleCount}`
+      );
+    }
+    if (particles.some((p) => 2 * p.radius > this.binSize)) {
+      throw new Error('seed returned a particle larger than the bins were sized for');
+    }
+    this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles));
+  }
+
+  /** Reads the current particles back from the GPU. */
+  async readParticles(): Promise<Particle[]> {
+    return unpackParticles(await this.readParticleBuffer());
+  }
+
+  /** The raw contents of the particle buffer. */
+  async readParticleBuffer(): Promise<ArrayBuffer> {
+    const size = this.particleBuffer.size;
+    const staging = this.device.createBuffer({
+      size,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
     });
-    new Float32Array(this.buffer.getMappedRange()).set(data);
-    this.buffer.unmap();
-
-    this.computer.initBuffers(device, this.bounds, this.objectCount, this.maxRadius, this.buffer);
-  }
-
-  render(passEncoder: GPURenderPassEncoder) {
-    this.renderer.render(passEncoder, this.buffer, this.objectCount);
-  }
-
-  compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
-    this.computer.compute(device, commandEncoder, globalUniformBindGroup, doCollision);
-  }
-
-  reset(device: GPUDevice) {
-    device.queue.writeBuffer(this.buffer, 0, packParticles(this.scatter()));
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyBufferToBuffer(this.particleBuffer, 0, staging, 0, size);
+    this.device.queue.submit([encoder.finish()]);
+    await staging.mapAsync(GPUMapMode.READ);
+    const contents = staging.getMappedRange().slice(0);
+    staging.unmap();
+    staging.destroy();
+    return contents;
   }
 }

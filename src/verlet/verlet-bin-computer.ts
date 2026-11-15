@@ -10,297 +10,195 @@ import binClearShaderCode from './shaders/bin-clear.wgsl';
 import binLinkClearShaderCode from './shaders/bin-link-clear.wgsl';
 import binSetShaderCode from './shaders/bin-set.wgsl';
 
+const shaders = {
+  binClear: binClearShaderCode,
+  binLinkClear: binLinkClearShaderCode,
+  binSet: binSetShaderCode,
+  applyForces: applyForcesShaderCode,
+  collide: collideShaderCode,
+  collideIncrement: collideIncrementShaderCode,
+  constrain: constrainShaderCode,
+  integrate: integrateShaderCode
+};
+
+type Stage = keyof typeof shaders;
+
+export interface BinGrid {
+  /** Side of one square bin, in simulation units. */
+  binSize: number;
+  width: number;
+  height: number;
+  binCount: number;
+}
+
+/**
+ * Sizes the grid of bins covering a square of side `bounds`. Width and height
+ * are forced even because collision processes every second bin per pass.
+ */
+export function binGrid(bounds: number, binSize: number): BinGrid {
+  // The shaders hold the bin size as an integer.
+  const size = Math.ceil(binSize);
+  const width = Math.ceil(bounds / size / 2) * 2;
+  const height = width;
+  return { binSize: size, width, height, binCount: Math.ceil((width * height) / 4) * 4 };
+}
+
+export interface BinComputerOptions {
+  /** Side of the square area the bins cover, centred on the origin. */
+  bounds: number;
+  /** At least the diameter of the largest particle. */
+  binSize: number;
+  particleCount: number;
+  particleBuffer: GPUBuffer;
+  /** The simulation params uniform (the Params struct in common.wgsl). */
+  paramsBuffer: GPUBuffer;
+}
+
+/**
+ * The compute side of the simulation: encodes one substep as a fixed sequence
+ * of compute dispatches. Internal to Verlet; tests reach it only to inspect
+ * the binning stage on its own.
+ */
 export class VerletBinComputer {
-  computePipelineLayout: GPUPipelineLayout;
+  readonly grid: BinGrid;
+  readonly binBuffer: GPUBuffer;
 
-  applyForcesPipeline: GPUComputePipeline;
-  collidePipeline: GPUComputePipeline;
-  collideIncrementPipeline: GPUComputePipeline;
-  constrainPipeline: GPUComputePipeline;
-  integratePipeline: GPUComputePipeline;
+  private particleCount: number;
+  private pipelines: Record<Stage, GPUComputePipeline>;
+  private bindGroups: GPUBindGroup[];
 
-  binClearPipeline: GPUComputePipeline;
-  binLinkClearPipeline: GPUComputePipeline;
-  binSetPipeline: GPUComputePipeline;
+  constructor(device: GPUDevice, options: BinComputerOptions) {
+    this.particleCount = options.particleCount;
+    this.grid = binGrid(options.bounds, options.binSize);
 
-  passDescriptor: GPUComputePassDescriptor;
-
-  // buffer data
-  binSquareSize: number;
-  binGridWidth: number;
-  binGridHeight: number;
-  binGridSquareCount: number;
-
-  objectCount: number;
-
-  binParams: Uint32Array;
-
-  binParamsBufferSize: number;
-  binParamsBuffer: GPUBuffer;
-
-  cso: Uint32Array;
-
-  csoBufferSize: number;
-  csoBuffer: GPUBuffer;
-
-  binData: Int32Array
-  binBuffer: GPUBuffer;
-
-  uniformBindGroup: GPUBindGroup;
-  storageBindGroup: GPUBindGroup;
-
-  storageBindGroupLayout: GPUBindGroupLayout;
-
-  constructor(globalUniformBindGroupLayout: GPUBindGroupLayout, device: GPUDevice) {
-    const uniformBindGroupLayout = device.createBindGroupLayout({
-      entries: [{
-        binding: 0, // binParams
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'uniform' }
-      }]
+    const uniform = (binding: number): GPUBindGroupLayoutEntry => ({
+      binding,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: 'uniform' }
+    });
+    const storage = (binding: number): GPUBindGroupLayoutEntry => ({
+      binding,
+      visibility: GPUShaderStage.COMPUTE,
+      buffer: { type: 'storage' }
     });
 
-    this.storageBindGroupLayout = device.createBindGroupLayout({
-      entries: [{
-        binding: 0, // verletObjects
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'storage' },
-      }, {
-        binding: 1, // bins
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'storage' },
-      }, {
-        binding: 2, // cso
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: 'storage' },
-      }]
+    const groupLayouts = [
+      device.createBindGroupLayout({ entries: [uniform(1)] }), // @group(0): params
+      device.createBindGroupLayout({ entries: [uniform(0)] }), // @group(1): binParams
+      // @group(2): verletObjects, bins, cso
+      device.createBindGroupLayout({ entries: [storage(0), storage(1), storage(2)] })
+    ];
+    const layout = device.createPipelineLayout({ bindGroupLayouts: groupLayouts });
+
+    this.pipelines = {} as Record<Stage, GPUComputePipeline>;
+    for (const stage of Object.keys(shaders) as Stage[]) {
+      this.pipelines[stage] = device.createComputePipeline({
+        label: stage,
+        layout,
+        compute: {
+          module: device.createShaderModule({ code: computeShaderSource(shaders[stage]) }),
+          entryPoint: 'main'
+        }
+      });
+    }
+
+    const { binSize, width, height, binCount } = this.grid;
+    const binParamsBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    device.queue.writeBuffer(binParamsBuffer, 0, new Uint32Array([binSize, width, height, binCount]));
+
+    // Collision step offset: which of the four interleaved sets of bins the
+    // next collide pass covers. collideIncrement advances it on the GPU.
+    const csoBuffer = device.createBuffer({
+      size: 8,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     });
 
-    this.computePipelineLayout = device.createPipelineLayout({
-      bindGroupLayouts: [
-        globalUniformBindGroupLayout, // @group(0)
-        uniformBindGroupLayout,  // @group(1)
-        this.storageBindGroupLayout,  // @group(2)
-      ]
-    });
-  }
-
-  initBuffers(device: GPUDevice,
-              bounds: number,
-              objectCount: number,
-              objectSize: number,
-              voBuffer: GPUBuffer) {
-    this.objectCount = objectCount;
-    
-    this.binSquareSize = objectSize * 2;
-    this.binGridWidth = Math.ceil((bounds / this.binSquareSize) / 2) * 2;
-    this.binGridHeight = Math.ceil((bounds / this.binSquareSize) / 2) * 2;
-    this.binGridSquareCount = Math.ceil((this.binGridWidth * this.binGridHeight) / 4) * 4;
-
-    this.binClearPipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(binClearShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-
-    this.binLinkClearPipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(binLinkClearShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-
-    this.binSetPipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(binSetShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-
-    this.applyForcesPipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(applyForcesShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-
-    this.collidePipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(collideShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-
-    this.collideIncrementPipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(collideIncrementShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });    
-
-    this.constrainPipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(constrainShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-
-    this.integratePipeline = device.createComputePipeline({
-      layout: this.computePipelineLayout,
-      compute: {
-        module: device.createShaderModule({
-          code: computeShaderSource(integrateShaderCode)
-        }),
-        entryPoint: 'main',
-      },
-    });
-    
-    // bin Parameters
-    this.binParams = new Uint32Array([
-      this.binSquareSize,      // bin square size
-      this.binGridWidth,       // grid width
-      this.binGridHeight,      // grid height
-      this.binGridSquareCount, // number of grid squares
-    ]);
-
-    this.binParamsBuffer = device.createBuffer({
-      size: this.binParams.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Uint32Array(this.binParamsBuffer.getMappedRange()).set(this.binParams);
-    this.binParamsBuffer.unmap();
-
-    // CSO Buffer
-    this.cso = new Uint32Array([
-      0,                       // bin X start offset
-      0,                       // bin Y start offset
-    ]);
-
-    this.csoBuffer = device.createBuffer({
-      size: this.cso.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Uint32Array(this.csoBuffer.getMappedRange()).set(this.cso);
-    this.csoBuffer.unmap();
-
-    // binData: Int32Array
-    this.binData = new Int32Array(this.binGridSquareCount);
+    // One i32 per bin: the index of the first particle in its list, or -1.
     this.binBuffer = device.createBuffer({
-      size: this.binData.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-      mappedAtCreation: true
-    });
-    new Uint32Array(this.binBuffer.getMappedRange()).set(this.binData);
-    this.binBuffer.unmap();
-
-    this.uniformBindGroup = device.createBindGroup({
-      layout: this.binSetPipeline.getBindGroupLayout(1),
-      entries: [{
-          binding: 0,
-          resource: { buffer: this.binParamsBuffer },
-        }
-      ]
+      size: binCount * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
 
-    this.storageBindGroup = device.createBindGroup({
-      layout: this.storageBindGroupLayout,
-      entries: [{
-          binding: 0,
-          resource: { buffer: voBuffer },
-        }, {
-          binding: 1,
-          resource: { buffer: this.binBuffer },
-        }, {
-          binding: 2,
-          resource: { buffer: this.csoBuffer },
-        }
-      ],
-    });
+    this.bindGroups = [
+      device.createBindGroup({
+        layout: groupLayouts[0],
+        entries: [{ binding: 1, resource: { buffer: options.paramsBuffer } }]
+      }),
+      device.createBindGroup({
+        layout: groupLayouts[1],
+        entries: [{ binding: 0, resource: { buffer: binParamsBuffer } }]
+      }),
+      device.createBindGroup({
+        layout: groupLayouts[2],
+        entries: [
+          { binding: 0, resource: { buffer: options.particleBuffer } },
+          { binding: 1, resource: { buffer: this.binBuffer } },
+          { binding: 2, resource: { buffer: csoBuffer } }
+        ]
+      })
+    ];
   }
 
-  compute(device: GPUDevice, commandEncoder: GPUCommandEncoder, globalUniformBindGroup: GPUBindGroup, doCollision: boolean) {
-    const voWorkgroupCount = Math.ceil(this.objectCount / 64);
-    const binWorkgroupCount = Math.ceil(this.binGridSquareCount / 64);
-    const binSubXWorkgroupCount = Math.ceil((this.binGridWidth / 2) / 16);
-    const binSubYWorkgroupCount = Math.ceil((this.binGridHeight / 2) / 16);
+  /** Encodes one substep as a single compute pass. */
+  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean) {
+    const pass = this.beginPass(encoder);
+    const perParticle = Math.ceil(this.particleCount / 64);
 
-    let passEncoder = commandEncoder.beginComputePass();
-    passEncoder.setBindGroup(0, globalUniformBindGroup);
-    passEncoder.setBindGroup(1, this.uniformBindGroup);
-    passEncoder.setBindGroup(2, this.storageBindGroup);
-
-    // binning
-    if (doCollision) {
-      passEncoder.setPipeline(this.binClearPipeline);
-      passEncoder.dispatchWorkgroups(binWorkgroupCount);
-
-      passEncoder.setPipeline(this.binLinkClearPipeline);
-      passEncoder.dispatchWorkgroups(voWorkgroupCount);
-
-      passEncoder.setPipeline(this.binSetPipeline);
-      passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    if (collide) {
+      this.dispatchBinning(pass);
     }
 
-    // verlet integration
-    passEncoder.setPipeline(this.applyForcesPipeline);
-    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    pass.setPipeline(this.pipelines.applyForces);
+    pass.dispatchWorkgroups(perParticle);
 
-    if (doCollision) {
-      passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
+    if (collide) {
+      // A collide pass moves particles in the 3x3 bins around each bin it
+      // visits, so it visits only every second bin in x and y. Four passes,
+      // with collideIncrement shifting the offset between them, cover all bins.
+      const x = Math.ceil(this.grid.width / 2 / 16);
+      const y = Math.ceil(this.grid.height / 2 / 16);
+      for (let i = 0; i < 4; i++) {
+        pass.setPipeline(this.pipelines.collide);
+        pass.dispatchWorkgroups(x, y);
 
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
-
-      passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
-
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
-
-      passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
-
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
-
-      passEncoder.setPipeline(this.collidePipeline);
-      passEncoder.dispatchWorkgroups(binSubXWorkgroupCount, binSubYWorkgroupCount);
-      
-      passEncoder.setPipeline(this.collideIncrementPipeline);
-      passEncoder.dispatchWorkgroups(1);
+        pass.setPipeline(this.pipelines.collideIncrement);
+        pass.dispatchWorkgroups(1);
+      }
     }
 
-    passEncoder.setPipeline(this.constrainPipeline);
-    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    pass.setPipeline(this.pipelines.constrain);
+    pass.dispatchWorkgroups(perParticle);
 
-    passEncoder.setPipeline(this.integratePipeline);
-    passEncoder.dispatchWorkgroups(voWorkgroupCount);
+    pass.setPipeline(this.pipelines.integrate);
+    pass.dispatchWorkgroups(perParticle);
 
-    passEncoder.end();   
+    pass.end();
+  }
+
+  /** Encodes only the binning stage, leaving the bin lists in the buffers. */
+  encodeBinning(encoder: GPUCommandEncoder) {
+    const pass = this.beginPass(encoder);
+    this.dispatchBinning(pass);
+    pass.end();
+  }
+
+  private beginPass(encoder: GPUCommandEncoder): GPUComputePassEncoder {
+    const pass = encoder.beginComputePass();
+    this.bindGroups.forEach((group, i) => pass.setBindGroup(i, group));
+    return pass;
+  }
+
+  private dispatchBinning(pass: GPUComputePassEncoder) {
+    pass.setPipeline(this.pipelines.binClear);
+    pass.dispatchWorkgroups(Math.ceil(this.grid.binCount / 64));
+
+    pass.setPipeline(this.pipelines.binLinkClear);
+    pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
+
+    pass.setPipeline(this.pipelines.binSet);
+    pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
   }
 }

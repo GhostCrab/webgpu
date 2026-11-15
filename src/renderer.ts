@@ -4,20 +4,16 @@ import { mat4, vec2, Vec2 } from 'wgpu-matrix';
 
 // import RenderStats from './renderStats';
 import { RenderPassDescriptor } from './render-pass-descriptor';
-import { packParams, PARAMS_BYTES } from './verlet/particle-layout';
 import { Verlet } from './verlet/verlet';
 import GuiWrapper from './gui-wrapper';
 
 import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
 
-export const stepCount = 20;
 let impulse = 2000;
 
 // Fixed simulation resolution - physics will always run at 4K
 const SIMULATION_WIDTH = 3840;
 const SIMULATION_HEIGHT = 2160;
-
-let mvp = mat4.identity();
 
 export default class Renderer {
   canvas: HTMLCanvasElement;
@@ -45,10 +41,6 @@ export default class Renderer {
 
   // 🔺 Resources
   renderTexture: GPUTexture;
-  mvpBuffer: GPUBuffer;
-  simParamsBuffer: GPUBuffer;
-  uniformBindGroupLayout: GPUBindGroupLayout;
-  uniformBindGroup: GPUBindGroup;
   
   fullscreenQuadPipeline: GPURenderPipeline;
   fullscreenQuadBindGroup: GPUBindGroup;
@@ -179,7 +171,7 @@ export default class Renderer {
     this.inputs.down.on('clickLockToggle', () => this.clickLock = !this.clickLock);
     this.inputs.down.on('classicConstrainToggle', () => this.classicConstrain = !this.classicConstrain);
 
-    this.inputs.down.on('reset', () => this.verlet.reset(this.device));
+    this.inputs.down.on('reset', () => this.verlet.reset());
   }
 
   // 🏎️ Start the rendering engine
@@ -222,29 +214,6 @@ export default class Renderer {
 
   // 🍱 Initialize resources to render triangle (buffers, shaders, pipeline)
   async initializeResources() {
-    // 🔺 Buffers
-    const createBuffer = (
-      arr: Float32Array | Uint16Array | Uint32Array,
-      usage: number
-    ) => {
-      // 📏 Align to 4 bytes (thanks @chrimsonite)
-      let desc = {
-        size: (arr.byteLength + 3) & ~3,
-        usage,
-        mappedAtCreation: true
-      };
-      let buffer = this.device.createBuffer(desc);
-      const writeArray =
-        arr instanceof Uint16Array
-          ? new Uint16Array(buffer.getMappedRange())
-          : arr instanceof Uint32Array
-          ? new Uint32Array(buffer.getMappedRange())
-          : new Float32Array(buffer.getMappedRange());
-      writeArray.set(arr);
-      buffer.unmap();
-      return buffer;
-    };
-
     // ⚗️ Graphics Pipeline
     // Simulation rendering uses FIXED 4K size
     this.simRenderPassDesc = new RenderPassDescriptor(this.device, this.simWidth, this.simHeight);
@@ -305,65 +274,33 @@ export default class Renderer {
       ],
     });
 
-    // 🦄 Uniform Data
-    this.uniformBindGroupLayout = this.device.createBindGroupLayout({
-      label: 'renderBindGroupLayout',
-      entries: [{
-          binding: 0, // mvp
-          visibility: GPUShaderStage.VERTEX,
-          buffer: { type: 'uniform' }
-        }, {
-          binding: 1, // params
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-          buffer: { type: 'uniform' }
-        }
-      ]
-    });
-
-    // MVP uses FIXED simulation size, not canvas size
-    mvp = mat4.ortho(
-      -this.simWidth / 2,
-      this.simWidth / 2,
-      this.simHeight / 2,
-      -this.simHeight / 2,
-      1.05,
-      -1
-    );
-    this.mvpBuffer = createBuffer(mvp as Float32Array, GPUBufferUsage.UNIFORM);
     this.constrainRadius = this.simHeight / 2 - 20;
 
-    this.simParamsBuffer = this.device.createBuffer({
-      size: PARAMS_BYTES,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    // The simulation occupies a FIXED space, not the canvas size
+    this.verlet = new Verlet(this.device, {
+      bounds: this.simHeight,
+      projection: mat4.ortho(
+        -this.simWidth / 2,
+        this.simWidth / 2,
+        this.simHeight / 2,
+        -this.simHeight / 2,
+        1.05,
+        -1
+      ) as Float32Array,
+      targetFormat: navigator.gpu.getPreferredCanvasFormat()
     });
-
-    this.uniformBindGroup = this.device.createBindGroup({
-      layout: this.uniformBindGroupLayout,
-      entries: [{
-        binding: 0,
-        resource: { buffer: this.mvpBuffer }
-      }, {
-        binding: 1,
-        resource: { buffer: this.simParamsBuffer }
-      }]
-    });
-
-    console.log(this.canvas);
-
-    // Verlet uses FIXED simulation size, not canvas size
-    this.verlet = new Verlet(this.simHeight, this.uniformBindGroupLayout, this.device);
 
     // Initialize GUI
     this.gui = new GuiWrapper();
     this.gui.init({
-      particleCount: this.verlet.objectCount,
+      particleCount: this.verlet.particleCount,
       doCollision: this.doCollision,
       paused: this.paused,
       clickLock: this.clickLock,
       classicConstrain: this.classicConstrain,
       constrainRadius: this.constrainRadius,
       impulse: this.impulse,
-      stepCount: stepCount,
+      stepCount: this.verlet.substeps,
       simWidth: this.simWidth,
       simHeight: this.simHeight,
     }, {
@@ -371,7 +308,7 @@ export default class Renderer {
       onPauseToggle: () => { this.paused = !this.paused; },
       onClickLockToggle: () => { this.clickLock = !this.clickLock; },
       onClassicConstrainToggle: () => { this.classicConstrain = !this.classicConstrain; },
-      onReset: () => { this.verlet.reset(this.device); },
+      onReset: () => { this.verlet.reset(); },
       onConstrainRadiusChange: (value) => {
         this.constrainRadius = value;
       },
@@ -416,23 +353,6 @@ export default class Renderer {
     }
 
     this.updateViewport();
-  }
-
-  updateSimParams(
-    totalTime: number,
-    deltaTime: number,
-    clickPointX = 0,
-    clickPointY = 0,
-    clickForce = 0
-  ) {
-    this.device.queue.writeBuffer(this.simParamsBuffer, 0, packParams({
-      totalTime,
-      deltaTime,
-      constrainRadius: this.constrainRadius,
-      boxDim: this.simHeight,
-      constrainType: this.classicConstrain ? 0 : 1,
-      clickPoint: [clickPointX, clickPointY, clickForce]
-    }));
   }
 
   async render() {
@@ -484,11 +404,14 @@ export default class Renderer {
 
       let commandEncoder = this.device.createCommandEncoder();
 
-      this.updateSimParams(totalTime, deltaTime / stepCount, clickPointX, clickPointY, clickForce);
       if (!this.paused) {
-        for (let i = 0; i < stepCount; i++) {
-          this.verlet.compute(this.device, commandEncoder, this.uniformBindGroup, this.doCollision);
-        }
+        this.verlet.step(commandEncoder, deltaTime, {
+          clickPoint: [clickPointX, clickPointY],
+          clickForce,
+          constrainRadius: this.constrainRadius,
+          classicConstrain: this.classicConstrain,
+          collide: this.doCollision
+        });
       }
 
       {
@@ -496,9 +419,7 @@ export default class Renderer {
         this.simRenderPassDesc.updateResolveTarget(this.renderTexture.createView());
 
         let passEncoder = commandEncoder.beginRenderPass(this.simRenderPassDesc);
-        passEncoder.setBindGroup(0, this.uniformBindGroup);
-
-        this.verlet.render(passEncoder);
+        this.verlet.draw(passEncoder);
         passEncoder.end();
       }
 

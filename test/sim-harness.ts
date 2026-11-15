@@ -1,13 +1,7 @@
 import { mat4 } from 'wgpu-matrix';
 
 import { RenderPassDescriptor } from '../src/render-pass-descriptor';
-import {
-  packParams,
-  packParticles,
-  Particle,
-  unpackBinLinks,
-  unpackParticles
-} from '../src/verlet/particle-layout';
+import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
 import { Verlet } from '../src/verlet/verlet';
 import { getDevice } from './gpu';
 
@@ -23,7 +17,6 @@ export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
 export const SUBSTEPS = 20;
 export const FRAME_TIME = 1 / 60;
 
-const OBJECT_COUNT = 15000;
 
 export interface TestParticle {
   x: number;
@@ -52,6 +45,7 @@ export interface Sim {
   count: number;
   step(frames: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
+  reset(): void;
   /** Runs only the binning stage and returns the spatial hash it built. */
   readBinLists(): Promise<{ heads: Int32Array; links: Int32Array }>;
   /**
@@ -109,66 +103,27 @@ export async function readBuffer(device: GPUDevice, source: GPUBuffer): Promise<
 export async function createSim(particles: TestParticle[]): Promise<Sim | null> {
   const device = await getDevice();
   if (!device) return null;
-  if (particles.length > OBJECT_COUNT) throw new Error('too many particles');
-
-  const globalLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
-      {
-        binding: 1,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: 'uniform' }
-      }
-    ]
-  });
-  const mvpBuffer = device.createBuffer({
-    size: 64,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-  });
-  const paramsBuffer = device.createBuffer({
-    size: 64,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-  });
-  const globalBindGroup = device.createBindGroup({
-    layout: globalLayout,
-    entries: [
-      { binding: 0, resource: { buffer: mvpBuffer } },
-      { binding: 1, resource: { buffer: paramsBuffer } }
-    ]
-  });
 
   // Same projection as the app: centre origin, y down, fixed 3840x2160 space.
   const simWidth = (BOUNDS * 16) / 9;
-  const mvp = mat4.ortho(-simWidth / 2, simWidth / 2, BOUNDS / 2, -BOUNDS / 2, 1.05, -1);
-  device.queue.writeBuffer(mvpBuffer, 0, mvp as Float32Array<ArrayBuffer>);
+  const projection = mat4.ortho(-simWidth / 2, simWidth / 2, BOUNDS / 2, -BOUNDS / 2, 1.05, -1);
+  const format = navigator.gpu.getPreferredCanvasFormat();
 
-  const verlet = new Verlet(BOUNDS, globalLayout, device);
-
-  // The particle count is fixed, so the rest are parked: radius 0 disables a
-  // particle. They sit on a grid so no bin holds more than one of them.
-  const side = Math.ceil(Math.sqrt(OBJECT_COUNT));
-  const all: Particle[] = [];
-  for (let i = 0; i < OBJECT_COUNT; i++) {
-    const p = particles[i];
-    if (p) {
-      all.push({
+  const verlet = new Verlet(device, {
+    bounds: BOUNDS,
+    projection: projection as Float32Array,
+    targetFormat: format,
+    substeps: SUBSTEPS,
+    seed: () =>
+      particles.map((p) => ({
         x: p.x,
         y: p.y,
         prevX: p.prevX ?? p.x,
         prevY: p.prevY ?? p.y,
         radius: p.radius ?? RADIUS,
         rgb: p.rgb ?? [1, 1, 1]
-      });
-    } else {
-      const x = ((i % side) - side / 2) * 10;
-      const y = (Math.floor(i / side) - side / 2) * 10;
-      all.push({ x, y, prevX: x, prevY: y, radius: 0, rgb: [0, 0, 0] });
-    }
-  }
-  const data = packParticles(all);
-  device.queue.writeBuffer(verlet.buffer, 0, data);
-
-  let totalTime = 0;
+      }))
+  });
 
   return {
     device,
@@ -176,68 +131,37 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
 
     step(frames, input = {}) {
       for (let f = 0; f < frames; f++) {
-        totalTime += FRAME_TIME;
-        device.queue.writeBuffer(
-          paramsBuffer,
-          0,
-          packParams({
-            totalTime,
-            deltaTime: FRAME_TIME / SUBSTEPS,
-            constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
-            boxDim: BOUNDS,
-            constrainType: input.classicConstrain ? 0 : 1,
-            clickPoint: [input.clickX ?? 0, input.clickY ?? 0, input.clickForce ?? 0]
-          })
-        );
-
         const encoder = device.createCommandEncoder();
-        for (let s = 0; s < SUBSTEPS; s++) {
-          verlet.compute(device, encoder, globalBindGroup, input.collide ?? true);
-        }
+        verlet.step(encoder, FRAME_TIME, {
+          clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
+          clickForce: input.clickForce ?? 0,
+          constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
+          classicConstrain: input.classicConstrain ?? false,
+          collide: input.collide ?? true
+        });
         device.queue.submit([encoder.finish()]);
       }
     },
 
-    async read() {
-      const all = unpackParticles(await readBuffer(device, verlet.buffer));
-      return all.slice(0, particles.length);
+    read() {
+      return verlet.readParticles();
+    },
+
+    reset() {
+      verlet.reset();
     },
 
     async readBinLists() {
-      const computer = verlet.computer;
-      device.queue.writeBuffer(
-        paramsBuffer,
-        0,
-        packParams({
-          totalTime: 0,
-          deltaTime: 0,
-          constrainRadius: DEFAULT_CONSTRAIN_RADIUS,
-          boxDim: BOUNDS,
-          constrainType: 1,
-          clickPoint: [0, 0, 0]
-        })
-      );
       const encoder = device.createCommandEncoder();
-      const pass = encoder.beginComputePass();
-      pass.setBindGroup(0, globalBindGroup);
-      pass.setBindGroup(1, computer.uniformBindGroup);
-      pass.setBindGroup(2, computer.storageBindGroup);
-      pass.setPipeline(computer.binClearPipeline);
-      pass.dispatchWorkgroups(Math.ceil(computer.binGridSquareCount / 64));
-      pass.setPipeline(computer.binLinkClearPipeline);
-      pass.dispatchWorkgroups(Math.ceil(OBJECT_COUNT / 64));
-      pass.setPipeline(computer.binSetPipeline);
-      pass.dispatchWorkgroups(Math.ceil(OBJECT_COUNT / 64));
-      pass.end();
+      verlet.computer.encodeBinning(encoder);
       device.queue.submit([encoder.finish()]);
 
-      const heads = new Int32Array(await readBuffer(device, computer.binBuffer));
-      const links = unpackBinLinks(await readBuffer(device, verlet.buffer));
+      const heads = new Int32Array(await readBuffer(device, verlet.computer.binBuffer));
+      const links = unpackBinLinks(await verlet.readParticleBuffer());
       return { heads, links };
     },
 
     async render(width, height) {
-      const format = navigator.gpu.getPreferredCanvasFormat();
       const target = device.createTexture({
         size: [width, height],
         format,
@@ -254,8 +178,7 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
 
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginRenderPass(passDescriptor);
-      pass.setBindGroup(0, globalBindGroup);
-      verlet.render(pass);
+      verlet.draw(pass);
       pass.end();
       encoder.copyTextureToBuffer({ texture: target }, { buffer: staging, bytesPerRow }, [
         width,
