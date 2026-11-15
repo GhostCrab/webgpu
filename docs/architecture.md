@@ -37,7 +37,7 @@ WGSL has no imports. `shader-source.ts` is the one place compute shader source i
 
 Dispatched in this order:
 
-1. `bin-clear`, `bin-link-clear`, `bin-set` build the spatial hash.
+1. `bin-clear`, `bin-link-clear`, `bin-set` build the bin grid.
 2. `apply-forces` applies gravity (+y, scaled by radius), or the click force when one is active.
 3. `collide` then `collideIncrement`, four times.
 4. `constrain` keeps particles inside the boundary circle (two modes, selected by `params.constrainType`).
@@ -45,15 +45,17 @@ Dispatched in this order:
 
 Steps 1 and 3 are skipped when collision is off.
 
-### Spatial hash
+### Bin grid
 
-The grid uses bins as wide as the largest particle's diameter. `bins[bin]` holds the index of the head particle and each particle's `binLink` points to the next, forming a per-bin linked list terminated by -1.
+A dense grid over simulation space, not a hash table. The grid uses bins as wide as the largest particle's diameter. `bins[bin]` holds the index of the head particle and each particle's `binLink` points to the next, forming a per-bin linked list terminated by -1.
 
 `bin-set` builds these lists lock-free with `atomicExchange`, which is why it views the same buffers through `VerletObjectAtomicBin` and `array<atomic<i32>>` while every other shader uses the plain types.
 
-### Race-free collisions
+### Four-pass collisions
 
 `collide` writes positions of particles in the 3x3 neighbourhood of its bin, so adjacent bins cannot be processed in parallel. Each `collide` dispatch covers only every second bin in x and y (hence the grid dimensions are forced even and the dispatch is `width/2 x height/2`), offset by `cso`.
+
+**This scheme races.** Two invocations two bins apart both write the particles in the bin between them, without synchronisation. This was found by reading the shader and has not been demonstrated by a test. `docs/adr/0002-jacobi-gather-collision-solver.md` records the replacement; until it lands, treat lost corrections as a second source of run-to-run differences.
 
 `collideIncrement` is a 1-invocation shader that advances `cso` through (0,0), (1,0), (0,1), (1,1) on the GPU, so the four passes can be encoded in a single command buffer with no CPU-side uniform writes between them.
 

@@ -24,13 +24,17 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 ## What can be asserted
 
-Binning uses atomics, so the order particles are visited in differs between runs, and **individual particle positions are not reproducible** in multi-particle runs. Assert on one of:
+Binning uses atomics, so the order particles are visited in differs between runs, and the four-pass collide races (see `docs/architecture.md`). For both reasons **individual particle positions are not reproducible** in multi-particle runs. Assert on one of:
 
 - **Hand-computable results** for one or two particles (free fall, a click force, the boundary).
 - **Invariants**: no non-finite values, every particle inside the boundary circle, every particle in exactly one bin list.
 - **Aggregate statistics with a tolerance**, from `runStats`.
 
 The aggregate ranges in `simulation.test.ts` are measured values. If a deliberate behaviour change moves them, re-measure over at least four runs and widen each range to several times the spread.
+
+## Checking a claim by running it
+
+A claim about what the simulation does ("this particle ends outside the boundary circle") is a guess until it has run. Write a throwaway scenario through the harness in a new file under `test/`, run that one file, report what it printed, and delete the file unless it is becoming a real test. This applies to research and review as much as to implementation.
 
 ## Pure modules
 

@@ -6,15 +6,15 @@ A GPU-driven 2D Verlet particle simulation running in WebGPU compute shaders. Co
 
 ## Where to look
 
-- `docs/architecture.md`: read before changing anything under `src/`. Modules, their interfaces, the particle layout and the compute pipeline order.
-- `docs/testing.md`: read before writing or debugging a test. The harness, and what can and cannot be asserted about a GPU simulation.
+- `docs/architecture.md`: read before designing or changing anything under `src/`. Modules, their interfaces, the particle layout and the compute pipeline order.
+- `docs/testing.md`: read before writing or debugging a test, or to check a claim about behaviour by running it. The harness, and what can and cannot be asserted about a GPU simulation.
 - `GLOSSARY.md`: the project's terms. Use them in code, tests and issues.
 - `CODING_STANDARDS.md`: the rules a review enforces.
 
 ## Gotchas
 
 - The build transpiles without type-checking. `npm run typecheck` is the only type check; it covers `src/` and `test/`.
-- A pre-commit hook runs `npm run typecheck` and `npm test`. A failing commit means one of those failed.
+- A pre-commit hook runs `npm run lint`, `npm run typecheck` and `npm test`. A failing commit means one of those failed. CI runs the same three with `NO_GPU` set, which skips the GPU tests.
 - `.gitignore` ignores every `*.js` and `*.sh` file except `webpack.*`. Name new config and script files `.mjs` or `.ts`.
 - There is no dev-server reload: refresh the page after webpack rebuilds.
 - `lil-gui` is the global `lil`, loaded from a CDN `<script>` tag in `index.html`, not an npm dependency.

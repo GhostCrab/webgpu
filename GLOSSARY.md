@@ -17,9 +17,29 @@ A particle with radius 0, which neither collides nor draws.
 One square cell of the grid laid over simulation space, holding the particles whose centres fall in it.
 _Avoid_: Cell, bucket, grid square
 
+**Particle id**:
+A number that identifies one particle for its whole life, wherever it sits in memory.
+
+**Capacity**:
+The most particles the simulation can hold at once, fixed when it starts.
+
+**Spawn**:
+To add a particle while the simulation is running.
+
+**Erase**:
+To remove a particle while the simulation is running.
+_Avoid_: Delete, kill
+
+**Bin grid**:
+The grid of bins laid over simulation space, used to find the particles near a given particle.
+_Avoid_: Spatial hash, hash grid
+
 **Substep**:
-One advance of every particle by a fraction of the frame time. A frame is a fixed number of substeps.
+One advance of every particle by a constant span of simulated time. A frame runs as many substeps as the time since the last frame calls for.
 _Avoid_: Step, iteration, tick
+
+**Substep rate**:
+The number of substeps per second of simulated time. Raising it makes the simulation more accurate and changes its results.
 
 **Boundary circle**:
 The circle particles are kept inside.
@@ -39,7 +59,7 @@ _Avoid_: Impulse, mouse force
 A mode in which the click force stays active after the mouse button is released.
 
 **Simulation space**:
-The fixed-size coordinate space particles live in, with its origin at the centre and y pointing down. It does not change with the window.
+The coordinate space particles live in, measured in its own units, with its origin at the centre and y pointing down. It does not change with the window or the display.
 _Avoid_: World space, sim resolution
 
 ### Modules

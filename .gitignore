@@ -32,6 +32,9 @@ ts-node
 *.sh
 !system.min.js
 
+# Working notes behind the reports in reports/
+research_notes/
+
 # Editors
 .vscode
 .markdownlint.json
