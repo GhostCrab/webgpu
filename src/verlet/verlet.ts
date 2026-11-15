@@ -91,7 +91,7 @@ export class Verlet {
   initBuffers(device: GPUDevice) {
     this.buffer = device.createBuffer({
       size: this.dataArray.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       mappedAtCreation: true,
     });
     new Float32Array(this.buffer.getMappedRange()).set(this.dataArray);

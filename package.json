@@ -8,7 +8,9 @@
         "serve": "http-server",
         "dev": "concurrently \"cross-env NODE_ENV=development ts-node webpack.ts --watch\" \"http-server\"",
         "prod": "concurrently \"cross-env NODE_ENV=production ts-node webpack.ts --watch\" \"http-server\"",
-        "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts"
+        "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts",
+        "test": "vitest run --root .",
+        "typecheck": "tsc --noEmit"
     },
     "repository": {
         "type": "git",
@@ -29,7 +31,7 @@
     },
     "homepage": "https://github.com/alaingalvan/webgpu-seed#readme",
     "devDependencies": {
-        "@types/node": "^18.11.x",
+        "@types/node": "^24.19.2",
         "@webgpu/types": "^0.1.26",
         "clean-webpack-plugin": "^4.0.x",
         "concurrently": "^9.2.1",
@@ -37,7 +39,10 @@
         "http-server": "^14.1.x",
         "ts-loader": "^9.4.x",
         "ts-node": "^10.9.x",
-        "typescript": "^4.9.x",
+        "typescript": "^5.9.3",
+        "vitest": "^5.1.0",
+        "webgpu": "^0.6.2",
+        "webgpu-utils": "^2.1.1",
         "webpack": "^5.75.x"
     },
     "dependencies": {

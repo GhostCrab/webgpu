@@ -211,7 +211,7 @@ export class VerletBinComputer {
     this.binData = new Int32Array(this.binGridSquareCount);
     this.binBuffer = device.createBuffer({
       size: this.binData.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       mappedAtCreation: true
     });
     new Uint32Array(this.binBuffer.getMappedRange()).set(this.binData);
