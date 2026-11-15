@@ -92,7 +92,10 @@ export default class Renderer {
     this.verlet = new Verlet(this.device, {
       bounds: SIMULATION_HEIGHT,
       projection: this.target.projection,
-      target: this.target.drawTarget
+      target: this.target.drawTarget,
+      // The new pipeline is opt-in while it is built: add ?pipeline=new to the URL.
+      pipeline:
+        new URLSearchParams(window.location.search).get('pipeline') === 'new' ? 'new' : 'current'
     });
 
     this.tickInputs = bindInputs(this.controls, {

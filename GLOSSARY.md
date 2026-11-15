@@ -7,7 +7,7 @@ A 2D simulation of many colliding balls inside a circle, computed on the GPU and
 ### Simulation
 
 **Particle**:
-One simulated ball, with a position, a previous position, a colour and a radius.
+One simulated ball, with a position, a velocity, a radius, a colour and a particle id.
 _Avoid_: Verlet object, object, ball
 
 **Disabled particle**:

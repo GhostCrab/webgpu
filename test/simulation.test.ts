@@ -271,6 +271,46 @@ describe('the boundary circle', () => {
 
 });
 
+describe.skipIf(!device)('only the new pipeline', () => {
+  test('particles of different radii fall at the same rate', async () => {
+    const sim = await createSim(
+      [
+        { x: -100, y: 0, radius: 1 },
+        { x: 0, y: 0, radius: RADIUS },
+        { x: 100, y: 0, radius: 6 }
+      ],
+      { pipeline: 'new' }
+    );
+    sim.step(FRAME);
+    for (const p of await sim.read()) {
+      expect(p.y).toBeCloseTo(ONE_FRAME_DROP, 5);
+      expect(perSubstep(p.vy)).toBeCloseTo(drop(FRAME) - drop(FRAME - 1), 5);
+    }
+  });
+
+  test('reads particles back ordered by particle id, with their velocity', async () => {
+    const sim = await createSim(
+      [
+        { x: 0, y: 0, vx: 600, rgb: [1, 0, 0] },
+        { x: 50, y: 0, vx: -300, rgb: [0, 1, 0] },
+        { x: 100, y: 0, rgb: [0, 0, 1] }
+      ],
+      { pipeline: 'new' }
+    );
+    sim.step(1);
+    const particles = await sim.read();
+    expect(particles.map((p) => p.id)).toEqual([0, 1, 2]);
+    expect(particles.map((p) => p.vx)).toEqual([600, -300, 0]);
+    // One substep of gravity, 3000 units per second squared.
+    for (const p of particles) expect(p.vy).toBeCloseTo(2.5, 4);
+    expect(particles.map((p) => p.rgb)).toEqual([
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1]
+    ]);
+  });
+});
+
 // Collisions exist only in the current pipeline so far.
 describe.skipIf(!device)('two overlapping particles', () => {
   const pair = [
@@ -420,12 +460,15 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
 });
 
 describe.skipIf(!device)('particle rendering', () => {
-  test('draws each particle as a disc of its colour at its position', async () => {
+  test.each(PIPELINES)('draws each particle as a disc of its colour at its position (%s pipeline)', async (pipeline) => {
     // A 256x144 image of the 3840x2160 space: 15 simulation units per pixel.
-    const sim = await createSim([
-      { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
-      { x: -1200, y: -600, radius: 150, rgb: [1, 0, 0] }
-    ]);
+    const sim = await createSim(
+      [
+        { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
+        { x: -1200, y: -600, radius: 150, rgb: [1, 0, 0] }
+      ],
+      { pipeline }
+    );
     const pixel = await sim.render(256, 144);
 
     expect(pixel(128, 72)).toEqual([0, 255, 0]);

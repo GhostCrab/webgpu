@@ -18,6 +18,9 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 `test/sim-harness.ts` is the test surface for the simulation: place particles, advance them by a number of substeps (`sim.step(20)` is one 60 Hz frame at the default rate of 1200 per second; `substepRate` is an input), read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
 
+- `createSim(particles, { pipeline })` picks the pipeline, `'current'` by default. Behaviour both pipelines share is tested against each in `PIPELINES` with `describe.each`.
+- Particles are placed and read with a velocity in simulation units per second, and read back ordered by particle id.
+
 - It runs every GPU operation inside a validation error scope and checks the scopes when a test reads a result and when the test ends, so a WebGPU validation error fails the test that caused it.
 - It destroys each sim's GPU resources when its test ends. Each sim holds a full-size simulation target, several hundred MB of GPU memory.
 - `test/gpu.ts` defines the WebGPU globals. Import it (or the harness) before any source module that needs them, including `particle-layout.ts`, which parses WGSL at load.

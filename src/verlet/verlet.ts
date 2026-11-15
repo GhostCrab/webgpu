@@ -1,16 +1,10 @@
 import { DEFAULT_SUBSTEP_RATE } from '../clock';
-import {
-  packParams,
-  packParticles,
-  PARAMS_BYTES,
-  Particle,
-  SeedParticle,
-  unpackParticles
-} from './particle-layout';
-import { readBuffer } from '../read-buffer';
 import type { DrawTarget } from '../simulation-target';
-import { VerletBinComputer } from './verlet-bin-computer';
-import { VerletRenderer } from './verlet-renderer';
+import { CompactPipeline } from './compact-pipeline';
+import { CurrentPipeline } from './current-pipeline';
+import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
+import type { Pipeline } from './pipeline';
+import type { VerletBinComputer } from './verlet-bin-computer';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
@@ -94,6 +88,11 @@ function radiusRange(particles: SeedParticle[]): { smallest: number; largest: nu
   return { smallest, largest };
 }
 
+/** Gives each particle its index as its particle id. */
+function withIds(particles: SeedParticle[]): Particle[] {
+  return particles.map((p, id) => ({ ...p, id }));
+}
+
 /** Everything outside the simulation that affects one frame of it. */
 export interface SimulationInput {
   /** Where the click force acts, in simulation space. */
@@ -146,9 +145,6 @@ export interface VerletOptions {
 export class Verlet {
   readonly particleCount: number;
 
-  /** The compute stage. Exposed for tests of the binning stage only. */
-  readonly computer: VerletBinComputer;
-
   private device: GPUDevice;
   private bounds: number;
   private seed: () => SeedParticle[];
@@ -159,9 +155,8 @@ export class Verlet {
   /** The substep rate of the latest step, which the default seed scales to. */
   private substepRate = DEFAULT_SUBSTEP_RATE;
 
-  private particleBuffer: GPUBuffer;
   private paramsBuffer: GPUBuffer;
-  private renderer: VerletRenderer;
+  private pipeline: Pipeline;
 
   constructor(device: GPUDevice, options: VerletOptions) {
     this.device = device;
@@ -180,17 +175,6 @@ export class Verlet {
     // A bin must be at least as wide as the largest particle.
     this.binSize = 2 * radii.largest;
     this.speedLimit = radii.smallest;
-
-    const data = packParticles(particles, this.substepRate);
-    this.particleBuffer = device.createBuffer({
-      size: data.byteLength,
-      usage:
-        GPUBufferUsage.STORAGE |
-        GPUBufferUsage.VERTEX |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC
-    });
-    device.queue.writeBuffer(this.particleBuffer, 0, data);
 
     this.paramsBuffer = device.createBuffer({
       size: PARAMS_BYTES,
@@ -213,26 +197,27 @@ export class Verlet {
       })
     );
 
+    const Pipeline = options.pipeline === 'new' ? CompactPipeline : CurrentPipeline;
     try {
-      this.computer = new VerletBinComputer(device, {
+      this.pipeline = new Pipeline(device, {
+        particles: withIds(particles),
+        substepRate: this.substepRate,
         bounds: this.bounds,
         binSize: this.binSize,
-        particleCount: this.particleCount,
-        particleBuffer: this.particleBuffer,
-        paramsBuffer: this.paramsBuffer
-      });
-
-      this.renderer = new VerletRenderer(device, {
+        paramsBuffer: this.paramsBuffer,
         projection: options.projection,
         target: options.target
       });
     } catch (error) {
       // Nothing outside holds a reference yet, so release what was created.
-      this.particleBuffer.destroy();
       this.paramsBuffer.destroy();
-      this.computer?.destroy();
       throw error;
     }
+  }
+
+  /** The current pipeline's compute stage. Exposed for tests of its binning stage only. */
+  get computer(): VerletBinComputer {
+    return this.currentPipeline().computer;
   }
 
   /**
@@ -270,13 +255,13 @@ export class Verlet {
     );
 
     for (let i = 0; i < substeps; i++) {
-      this.computer.encodeSubstep(encoder, input.collide);
+      this.pipeline.encodeSubstep(encoder, input.collide);
     }
   }
 
   /** Draws the particles into a pass matching the configured draw target. */
   draw(pass: GPURenderPassEncoder) {
-    this.renderer.render(pass, this.particleBuffer, this.particleCount);
+    this.pipeline.draw(pass);
   }
 
   /** Puts the particles back to a fresh starting state from the seed. */
@@ -292,24 +277,29 @@ export class Verlet {
       throw new Error('seed returned a particle larger than the bins were sized for');
     }
     this.speedLimit = radii.smallest;
-    this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles, this.substepRate));
+    this.pipeline.write(withIds(particles), this.substepRate);
   }
 
   /** Reads the current particles back from the GPU, ordered by particle id. */
-  async readParticles(): Promise<Particle[]> {
-    return unpackParticles(await this.readParticleBuffer(), this.substepRate);
+  readParticles(): Promise<Particle[]> {
+    return this.pipeline.read(this.substepRate);
   }
 
-  /** The raw contents of the particle buffer. */
+  /** The raw contents of the current pipeline's particle buffer. */
   readParticleBuffer(): Promise<ArrayBuffer> {
-    return readBuffer(this.device, this.particleBuffer);
+    return this.currentPipeline().readParticleBuffer();
   }
 
   /** Releases the GPU resources. The simulation cannot be used afterwards. */
   destroy() {
-    this.particleBuffer.destroy();
     this.paramsBuffer.destroy();
-    this.computer.destroy();
-    this.renderer.destroy();
+    this.pipeline.destroy();
+  }
+
+  private currentPipeline(): CurrentPipeline {
+    if (!(this.pipeline instanceof CurrentPipeline)) {
+      throw new Error('only the current pipeline has this binning stage');
+    }
+    return this.pipeline;
   }
 }

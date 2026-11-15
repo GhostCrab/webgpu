@@ -97,7 +97,7 @@ afterEach(async () => {
 });
 
 /** Every pipeline the simulation can run, for tests that judge them all alike. */
-export const PIPELINES: PipelineName[] = ['current'];
+export const PIPELINES: PipelineName[] = ['current', 'new'];
 
 export interface SimOptions {
   /** Defaults to the app's default pipeline. */

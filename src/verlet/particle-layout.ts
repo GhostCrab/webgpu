@@ -163,3 +163,96 @@ export function structShape(name: string): { size: number; fields: [string, numb
     ])
   };
 }
+
+// The new pipeline's compact particle (the Particle struct in common.wgsl).
+const compactStruct = structs.Particle;
+const compactOffsetOf = (field: string) => compactStruct.fields[field].offset / 4;
+const C_POS = compactOffsetOf('pos');
+const C_VEL = compactOffsetOf('vel');
+const C_RADIUS = compactOffsetOf('radius');
+const C_ID = compactOffsetOf('id');
+
+/** Bytes one particle occupies in the new pipeline's particle buffer. */
+export const COMPACT_PARTICLE_BYTES = compactStruct.size;
+const COMPACT_WORDS = COMPACT_PARTICLE_BYTES / 4;
+
+/** Bytes of one particle's colour in the new pipeline's colour buffer: 8 bits a channel. */
+export const COLOR_BYTES = 4;
+
+const toByte = (channel: number) => Math.round(Math.min(Math.max(channel, 0), 1) * 255);
+
+/**
+ * Lays particles out as the contents of the new pipeline's particle buffer,
+ * in the order given, and their colours as the contents of its colour buffer,
+ * where a particle's colour sits at its particle id. Ids must run from 0 to
+ * one less than the number of particles.
+ */
+export function packCompactParticles(particles: Particle[]): {
+  particleData: Float32Array<ArrayBuffer>;
+  colorData: Uint32Array<ArrayBuffer>;
+} {
+  const particleData = new Float32Array(particles.length * COMPACT_WORDS);
+  const ids = new Uint32Array(particleData.buffer);
+  const colorData = new Uint32Array(particles.length);
+  particles.forEach((p, i) => {
+    const o = i * COMPACT_WORDS;
+    particleData[o + C_POS] = p.x;
+    particleData[o + C_POS + 1] = p.y;
+    particleData[o + C_VEL] = p.vx;
+    particleData[o + C_VEL + 1] = p.vy;
+    particleData[o + C_RADIUS] = p.radius;
+    ids[o + C_ID] = p.id;
+    // Red in the low byte, as the shader's unpack4x8unorm reads it.
+    const [r, g, b] = p.rgb;
+    colorData[p.id] = (toByte(r) | (toByte(g) << 8) | (toByte(b) << 16) | (255 << 24)) >>> 0;
+  });
+  return { particleData, colorData };
+}
+
+/**
+ * Reads particles back out of the contents of the new pipeline's particle and
+ * colour buffers, ordered by particle id.
+ */
+export function unpackCompactParticles(
+  particleContents: ArrayBuffer,
+  colorContents: ArrayBuffer
+): Particle[] {
+  const data = new Float32Array(particleContents);
+  const ids = new Uint32Array(particleContents);
+  const colors = new Uint32Array(colorContents);
+  const particles: Particle[] = [];
+  for (let o = 0; o + COMPACT_WORDS <= data.length; o += COMPACT_WORDS) {
+    const id = ids[o + C_ID];
+    const color = colors[id];
+    particles.push({
+      id,
+      x: data[o + C_POS],
+      y: data[o + C_POS + 1],
+      vx: data[o + C_VEL],
+      vy: data[o + C_VEL + 1],
+      radius: data[o + C_RADIUS],
+      rgb: [(color & 0xff) / 255, ((color >>> 8) & 0xff) / 255, ((color >>> 16) & 0xff) / 255]
+    });
+  }
+  return particles.sort((a, b) => a.id - b.id);
+}
+
+/**
+ * The new pipeline's particle buffer as a per-instance vertex buffer, exposing
+ * the position, the radius and the particle id at the given shader locations.
+ */
+export function compactInstanceLayout(
+  positionLocation: number,
+  radiusLocation: number,
+  idLocation: number
+): GPUVertexBufferLayout {
+  return {
+    arrayStride: COMPACT_PARTICLE_BYTES,
+    stepMode: 'instance',
+    attributes: [
+      { shaderLocation: positionLocation, offset: C_POS * 4, format: 'float32x2' },
+      { shaderLocation: radiusLocation, offset: C_RADIUS * 4, format: 'float32' },
+      { shaderLocation: idLocation, offset: C_ID * 4, format: 'uint32' }
+    ]
+  };
+}
