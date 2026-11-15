@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest';
 
-import { canvasToSimulation, fitViewport } from '../src/letterbox';
 import { SimulationControls } from '../src/simulation-controls';
 
 const controls = () => new SimulationControls({ constrainRadius: 1060 });
@@ -138,44 +137,5 @@ describe('settings', () => {
       classicConstrain: true,
       constrainRadius: 400
     });
-  });
-});
-
-describe('fitting simulation space to the canvas', () => {
-  test('a wider canvas gets bars at the sides', () => {
-    expect(fitViewport(3840, 2160, 2000, 900)).toEqual({ x: 200, y: 0, width: 1600, height: 900 });
-  });
-
-  test('a taller canvas gets bars at top and bottom', () => {
-    expect(fitViewport(3840, 2160, 1600, 1300)).toEqual({ x: 0, y: 200, width: 1600, height: 900 });
-  });
-
-  test('a canvas of the same shape is filled', () => {
-    expect(fitViewport(3840, 2160, 1920, 1080)).toEqual({ x: 0, y: 0, width: 1920, height: 1080 });
-  });
-});
-
-describe('mapping the pointer into simulation space', () => {
-  const viewport = fitViewport(3840, 2160, 2000, 900);
-  const map = (x: number, y: number) => canvasToSimulation(viewport, 3840, 2160, x, y);
-
-  test('the centre of the canvas is the origin', () => {
-    expect(map(1000, 450)).toEqual([0, 0]);
-  });
-
-  test('the viewport corners are the corners of simulation space', () => {
-    expect(map(200, 0)).toEqual([-1920, -1080]);
-    expect(map(1800, 900)).toEqual([1920, 1080]);
-  });
-
-  test('a collapsed canvas maps every point to the origin', () => {
-    const collapsed = fitViewport(3840, 2160, 800, 0);
-    expect(canvasToSimulation(collapsed, 3840, 2160, 400, 0)).toEqual([0, 0]);
-    expect(canvasToSimulation(fitViewport(3840, 2160, 0, 0), 3840, 2160, 0, 0)).toEqual([0, 0]);
-  });
-
-  test('points in the bars clamp to the edge', () => {
-    expect(map(0, 450)).toEqual([-1920, 0]);
-    expect(map(2000, 450)).toEqual([1920, 0]);
   });
 });

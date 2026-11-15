@@ -22,7 +22,9 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 - `readBinGrid()` runs one bin grid build on its own and returns the particles in the order they sit in memory, with each bin's start; `test/bin-grid.test.ts` checks builds through it. The GPU computes bins in 32-bit floats, so a particle within a hair of a bin edge may sit in either bin; those checks allow for it.
 - `createSim(particles, { minBinSize })` sets the smallest bin size, for tests of large bin grids.
 - It runs every GPU operation inside a validation error scope and checks the scopes when a test reads a result and when the test ends, so a WebGPU validation error fails the test that caused it.
-- It destroys each sim's GPU resources when its test ends. Each sim holds a full-size simulation target, several hundred MB of GPU memory.
+- It destroys each sim's GPU resources when its test ends.
+- `createSim(particles, { boundaryRadius })` sizes simulation space from a boundary circle radius other than the app's; it is also the default constrain radius of every step.
+- `sim.render(width, height)` draws to a canvas-sized texture through the camera, as the app does, and returns a pixel lookup.
 - `test/gpu.ts` defines the WebGPU globals. Import it (or the harness) before any source module that needs them, including `particle-layout.ts`, which parses WGSL at load.
 
 ## What can be asserted
@@ -56,4 +58,4 @@ BENCH_NO_TIMESTAMPS=1 npm run bench           # as on a device without timestamp
 
 ## Pure modules
 
-`clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `sizeBinGrid`, `scatter`, the particle layout and the benchmark's table formatting are tested without a GPU.
+`clock.ts`, `simulation-controls.ts`, `camera.ts`, `sizeBinGrid`, `scatter`, the particle layout and the benchmark's table formatting are tested without a GPU.
