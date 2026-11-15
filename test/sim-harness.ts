@@ -40,6 +40,8 @@ export interface SimInput {
   /** Positive attracts, negative repels, 0 means gravity applies. */
   clickForce?: number;
   constrainRadius?: number;
+  /** Defaults to the origin. */
+  constrainCenter?: [number, number];
   classicConstrain?: boolean;
   collide?: boolean;
   /** Substeps per second of simulated time. Defaults to SUBSTEP_RATE. */
@@ -179,6 +181,7 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
             clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
             clickForce: input.clickForce ?? 0,
             constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
+            constrainCenter: input.constrainCenter,
             classicConstrain: input.classicConstrain ?? false,
             collide: input.collide ?? true,
             substepRate: input.substepRate ?? SUBSTEP_RATE

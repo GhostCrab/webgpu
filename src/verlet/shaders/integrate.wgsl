@@ -12,9 +12,15 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var prevPos = verletObjects[voIndex].prevPos.xy;
   var accel = verletObjects[voIndex].accel.xy;
 
-  var velocity = pos - prevPos;
+  var displacement = (pos - prevPos) + (accel * (params.deltaTime * params.deltaTime));
+  // The speed limit: no particle moves further than the smallest radius in one
+  // substep, so none can pass through another.
+  var distance = length(displacement);
+  if (distance > params.speedLimit) {
+    displacement *= params.speedLimit / distance;
+  }
   prevPos = pos;
-  pos = pos + velocity + (accel * (params.deltaTime * params.deltaTime));
+  pos = pos + displacement;
 
   verletObjects[voIndex].accel = vec4<f32>(0.0);
   verletObjects[voIndex].pos = vec4<f32>(pos.xy, 0.0, 0.0);

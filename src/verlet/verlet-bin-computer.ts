@@ -194,17 +194,19 @@ export class VerletBinComputer {
     }
 
     stages.push([
-      'constrain',
+      'integrate',
       (pass) => {
-        pass.setPipeline(this.pipelines.constrain);
+        pass.setPipeline(this.pipelines.integrate);
         pass.dispatchWorkgroups(perParticle);
       }
     ]);
 
+    // After the integrate, so that no substep ends with a particle outside
+    // the boundary circle.
     stages.push([
-      'integrate',
+      'constrain',
       (pass) => {
-        pass.setPipeline(this.pipelines.integrate);
+        pass.setPipeline(this.pipelines.constrain);
         pass.dispatchWorkgroups(perParticle);
       }
     ]);
