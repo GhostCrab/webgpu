@@ -16,7 +16,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # The particle layout's WGSL parser needs Float16Array, which Node 22 lacks.
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run lint

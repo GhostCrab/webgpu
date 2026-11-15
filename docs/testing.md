@@ -11,7 +11,7 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 ## Environment
 
 - GPU tests need a real GPU and skip themselves when no adapter is found. The development machine has no software fallback adapter.
-- Node 21 or newer is required: the setup relies on the `navigator` global.
+- Node 24 or newer is required: the setup relies on the `navigator` global, and the WGSL parser behind the particle layout needs `Float16Array`.
 - In Git Bash, run Vitest from a path with an upper-case drive letter (`cd "C:/Users/..."`). From a lower-case `c:` working directory Vitest fails with "failed to find the current suite". PowerShell and the pre-commit hook are unaffected.
 
 ## The harness
