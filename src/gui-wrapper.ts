@@ -1,93 +1,58 @@
+import { SimulationControls } from './simulation-controls';
+
 // lil-gui is loaded via CDN in index.html
 declare const lil: any;
 
+export interface GuiStats {
+  particleCount: number;
+  substeps: number;
+  simWidth: number;
+  simHeight: number;
+}
+
+/**
+ * The settings panel. Its controls are bound straight to the simulation
+ * controls object, so the panel and the keyboard shortcuts share one state.
+ */
 export default class GuiWrapper {
   gui: any;
-  params: any;
-  folders: { [key: string]: any } = {};
+  private stats: { fps: string | number; particleCount: number; stepCount: number; simResolution: string };
 
-  constructor() {
+  constructor(controls: SimulationControls, stats: GuiStats, onReset: () => void) {
     this.gui = new lil.GUI({ title: 'Debug Controls' });
-    this.params = {};
-  }
 
-  init(config: {
-    particleCount: number;
-    doCollision: boolean;
-    paused: boolean;
-    clickLock: boolean;
-    classicConstrain: boolean;
-    constrainRadius: number;
-    impulse: number;
-    stepCount: number;
-    simWidth: number;
-    simHeight: number;
-  }, callbacks: {
-    onCollisionToggle: () => void;
-    onPauseToggle: () => void;
-    onClickLockToggle: () => void;
-    onClassicConstrainToggle: () => void;
-    onReset: () => void;
-    onConstrainRadiusChange?: (value: number) => void;
-    onImpulseChange?: (value: number) => void;
-  }) {
-    // Stats folder
-    this.folders.stats = this.gui.addFolder('Stats');
-    this.params.fps = 0;
-    this.params.particleCount = config.particleCount;
-    this.params.stepCount = config.stepCount;
-    this.params.simResolution = `${config.simWidth}x${config.simHeight}`;
-    this.folders.stats.add(this.params, 'fps').disable().listen();
-    this.folders.stats.add(this.params, 'particleCount').disable();
-    this.folders.stats.add(this.params, 'stepCount').disable();
-    this.folders.stats.add(this.params, 'simResolution').name('Sim Resolution').disable();
+    this.stats = {
+      fps: 0,
+      particleCount: stats.particleCount,
+      stepCount: stats.substeps,
+      simResolution: `${stats.simWidth}x${stats.simHeight}`
+    };
+    const statsFolder = this.gui.addFolder('Stats');
+    statsFolder.add(this.stats, 'fps').disable().listen();
+    statsFolder.add(this.stats, 'particleCount').disable();
+    statsFolder.add(this.stats, 'stepCount').disable();
+    statsFolder.add(this.stats, 'simResolution').name('Sim Resolution').disable();
 
-    // Simulation controls
-    this.folders.simulation = this.gui.addFolder('Simulation');
-    this.params.doCollision = config.doCollision;
-    this.params.paused = config.paused;
-    this.params.clickLock = config.clickLock;
-    this.params.classicConstrain = config.classicConstrain;
+    // listen() keeps the panel in step when a keyboard shortcut changes a setting.
+    const simulation = this.gui.addFolder('Simulation');
+    simulation.add(controls, 'collide').name('Collision (C)').listen();
+    simulation.add(controls, 'paused').name('Paused (P)').listen();
+    simulation.add(controls, 'clickLock').name('Click Lock (L)').listen();
+    simulation.add(controls, 'classicConstrain').name('Classic Constrain (T)').listen();
 
-    this.folders.simulation.add(this.params, 'doCollision').name('Collision (C)').onChange(callbacks.onCollisionToggle);
-    this.folders.simulation.add(this.params, 'paused').name('Paused (P)').onChange(callbacks.onPauseToggle);
-    this.folders.simulation.add(this.params, 'clickLock').name('Click Lock (L)').onChange(callbacks.onClickLockToggle);
-    this.folders.simulation.add(this.params, 'classicConstrain').name('Classic Constrain (T)').onChange(callbacks.onClassicConstrainToggle);
+    const parameters = this.gui.addFolder('Parameters');
+    parameters.add(controls, 'constrainRadius', 50, 1000).name('Constrain Radius');
+    parameters.add(controls, 'impulse', 0, 10000).name('Mouse Impulse');
 
-    // Parameters
-    this.folders.params = this.gui.addFolder('Parameters');
-    this.params.constrainRadius = config.constrainRadius;
-    this.params.impulse = config.impulse;
+    this.gui.add({ reset: onReset }, 'reset').name('Reset (R)');
 
-    if (callbacks.onConstrainRadiusChange) {
-      this.folders.params.add(this.params, 'constrainRadius', 50, 1000).name('Constrain Radius').onChange(callbacks.onConstrainRadiusChange);
-    }
-
-    if (callbacks.onImpulseChange) {
-      this.folders.params.add(this.params, 'impulse', 0, 10000).name('Mouse Impulse').onChange(callbacks.onImpulseChange);
-    }
-
-    // Actions
-    this.params.reset = callbacks.onReset;
-    this.gui.add(this.params, 'reset').name('Reset (R)');
-
-    // Expand folders by default
-    this.folders.stats.open();
-    this.folders.simulation.open();
-    this.folders.params.open();
+    statsFolder.open();
+    simulation.open();
+    parameters.open();
   }
 
   updateFPS(fps: number) {
-    this.params.fps = fps.toFixed(1);
-  }
-
-  updateParams(params: Partial<{
-    doCollision: boolean;
-    paused: boolean;
-    clickLock: boolean;
-    classicConstrain: boolean;
-  }>) {
-    Object.assign(this.params, params);
+    this.stats.fps = fps.toFixed(1);
   }
 
   destroy() {

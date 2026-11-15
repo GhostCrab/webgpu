@@ -1,15 +1,13 @@
-import { GameInputs } from 'game-inputs'
+import { mat4 } from 'wgpu-matrix';
 
-import { mat4, vec2, Vec2 } from 'wgpu-matrix';
-
-// import RenderStats from './renderStats';
-import { RenderPassDescriptor } from './render-pass-descriptor';
-import { Verlet } from './verlet/verlet';
 import GuiWrapper from './gui-wrapper';
+import { bindInputs } from './input-bindings';
+import { canvasToSimulation, fitViewport, Viewport } from './letterbox';
+import { RenderPassDescriptor } from './render-pass-descriptor';
+import { SimulationControls } from './simulation-controls';
+import { Verlet } from './verlet/verlet';
 
 import fullscreenTexturedQuadWGSL from './shaders/fullscreenTexturedQuad.wgsl';
-
-let impulse = 2000;
 
 // Fixed simulation resolution - physics will always run at 4K
 const SIMULATION_WIDTH = 3840;
@@ -17,17 +15,13 @@ const SIMULATION_HEIGHT = 2160;
 
 export default class Renderer {
   canvas: HTMLCanvasElement;
-  inputs: GameInputs;
 
   // Simulation resolution (fixed, independent of window size)
   simWidth: number = SIMULATION_WIDTH;
   simHeight: number = SIMULATION_HEIGHT;
 
-  // Viewport for aspect ratio preservation
-  viewportX: number = 0;
-  viewportY: number = 0;
-  viewportWidth: number = 0;
-  viewportHeight: number = 0;
+  // Where the simulation appears on the canvas, preserving its aspect ratio
+  viewport: Viewport = { x: 0, y: 0, width: 0, height: 0 };
 
   // ⚙️ API Data Structures
   adapter: GPUAdapter;
@@ -41,41 +35,25 @@ export default class Renderer {
 
   // 🔺 Resources
   renderTexture: GPUTexture;
-  
+
   fullscreenQuadPipeline: GPURenderPipeline;
   fullscreenQuadBindGroup: GPUBindGroup;
 
-  startFrameMS: number;
   lastFrameMS: number;
-
-  // overlayElement: HTMLElement;
 
   // State
   running = true;
-  devicePixelRatio: number;
-  constrainRadius: number;
-  // renderStats: RenderStats = new RenderStats();
-  mousePos: Vec2;
-  leftClickState: boolean;
-  rightClickState: boolean;
-  clickForce: number;
-  doCollision: boolean;
-  paused: boolean;
-  clickLock: boolean;
-  classicConstrain: boolean;
 
+  controls: SimulationControls;
+  tickInputs: () => void;
   verlet: Verlet;
   gui: GuiWrapper;
-  impulse: number;
 
   constructor(canvas) {
     this.canvas = canvas;
-    this.devicePixelRatio = window.devicePixelRatio;
 
     this.canvas.width = this.canvas.clientWidth * window.devicePixelRatio;
     this.canvas.height = this.canvas.clientHeight * window.devicePixelRatio;
-
-    // this.overlayElement = document.getElementById('overlay');
 
     // Handle window resize
     window.addEventListener('resize', () => {
@@ -89,89 +67,19 @@ export default class Renderer {
       }
     });
 
-    this.inputs = new GameInputs(undefined, {
-      preventDefaults: false, 
-      allowContextMenu: false,
-      stopPropagation: false,
-      disabled: false
+    this.controls = new SimulationControls({ constrainRadius: this.simHeight / 2 - 20 });
+
+    this.tickInputs = bindInputs(this.controls, {
+      toSimulation: (pageX, pageY) =>
+        canvasToSimulation(
+          this.viewport,
+          this.simWidth,
+          this.simHeight,
+          pageX * window.devicePixelRatio,
+          pageY * window.devicePixelRatio
+        ),
+      onReset: () => this.verlet.reset()
     });
-
-    this.inputs.bind('LMB', 'Mouse1');
-    this.inputs.bind('RMB', 'Mouse3');
-    this.inputs.bind('reset', 'KeyR');
-    this.inputs.bind('collideToggle', 'KeyC');
-    this.inputs.bind('classicConstrainToggle', 'KeyT');
-    this.inputs.bind('pauseToggle', 'KeyP');
-    this.inputs.bind('clickLockToggle', 'KeyL');
-
-    this.doCollision = true;
-    this.paused = false;
-
-    this.mousePos = vec2.create(0.0, 0.0);
-    this.rightClickState = false;
-    this.leftClickState = false;
-    this.clickForce = 0;
-    this.clickLock = false;
-    this.classicConstrain = false;
-    this.impulse = impulse;
-
-    document.onmousemove = (event: MouseEvent) => {
-      // Map mouse position from window space to simulation space
-      // First get mouse position in canvas pixels
-      const canvasX = event.pageX * window.devicePixelRatio;
-      const canvasY = event.pageY * window.devicePixelRatio;
-
-      // Account for viewport offset (letterboxing/pillarboxing)
-      const viewportRelativeX = canvasX - this.viewportX;
-      const viewportRelativeY = canvasY - this.viewportY;
-
-      // Clamp to viewport bounds
-      const clampedX = Math.max(0, Math.min(this.viewportWidth, viewportRelativeX));
-      const clampedY = Math.max(0, Math.min(this.viewportHeight, viewportRelativeY));
-
-      // Map from viewport space to simulation space
-      const simX = (clampedX / this.viewportWidth) * this.simWidth;
-      const simY = (clampedY / this.viewportHeight) * this.simHeight;
-
-      // Center the coordinates (simulation uses center origin)
-      this.mousePos = vec2.create(
-         simX - (this.simWidth / 2),
-         simY - (this.simHeight / 2)
-      );
-    }
-
-    this.inputs.down.on('LMB', () => {
-      this.leftClickState = true
-      this.clickForce = this.impulse;
-    });
-    this.inputs.up.on('LMB', () => {
-      this.leftClickState = false
-      if (!this.rightClickState) {
-        this.clickForce = 0;
-      } else {
-        this.clickForce = -this.impulse;
-      }
-    });
-
-    this.inputs.down.on('RMB', () => {
-      this.rightClickState = true
-      this.clickForce = -this.impulse;
-    });
-    this.inputs.up.on('RMB', () => {
-      this.rightClickState = false
-      if (!this.leftClickState) {
-        this.clickForce = 0;
-      } else {
-        this.clickForce = this.impulse;
-      }
-    });
-
-    this.inputs.down.on('collideToggle', () => this.doCollision = !this.doCollision);
-    this.inputs.down.on('pauseToggle', () => this.paused = !this.paused);
-    this.inputs.down.on('clickLockToggle', () => this.clickLock = !this.clickLock);
-    this.inputs.down.on('classicConstrainToggle', () => this.classicConstrain = !this.classicConstrain);
-
-    this.inputs.down.on('reset', () => this.verlet.reset());
   }
 
   // 🏎️ Start the rendering engine
@@ -179,9 +87,6 @@ export default class Renderer {
     if (await this.initializeAPI()) {
       this.resizeBackings();
       await this.initializeResources();
-
-      this.startFrameMS = Date.now();
-      this.lastFrameMS = Date.now();
 
       this.render();
     }
@@ -212,7 +117,7 @@ export default class Renderer {
     return true;
   }
 
-  // 🍱 Initialize resources to render triangle (buffers, shaders, pipeline)
+  // 🍱 Initialize resources (render targets, pipelines, the simulation)
   async initializeResources() {
     // ⚗️ Graphics Pipeline
     // Simulation rendering uses FIXED 4K size
@@ -274,8 +179,6 @@ export default class Renderer {
       ],
     });
 
-    this.constrainRadius = this.simHeight / 2 - 20;
-
     // The simulation occupies a FIXED space, not the canvas size
     this.verlet = new Verlet(this.device, {
       bounds: this.simHeight,
@@ -290,52 +193,21 @@ export default class Renderer {
       targetFormat: navigator.gpu.getPreferredCanvasFormat()
     });
 
-    // Initialize GUI
-    this.gui = new GuiWrapper();
-    this.gui.init({
-      particleCount: this.verlet.particleCount,
-      doCollision: this.doCollision,
-      paused: this.paused,
-      clickLock: this.clickLock,
-      classicConstrain: this.classicConstrain,
-      constrainRadius: this.constrainRadius,
-      impulse: this.impulse,
-      stepCount: this.verlet.substeps,
-      simWidth: this.simWidth,
-      simHeight: this.simHeight,
-    }, {
-      onCollisionToggle: () => { this.doCollision = !this.doCollision; },
-      onPauseToggle: () => { this.paused = !this.paused; },
-      onClickLockToggle: () => { this.clickLock = !this.clickLock; },
-      onClassicConstrainToggle: () => { this.classicConstrain = !this.classicConstrain; },
-      onReset: () => { this.verlet.reset(); },
-      onConstrainRadiusChange: (value) => {
-        this.constrainRadius = value;
+    this.gui = new GuiWrapper(
+      this.controls,
+      {
+        particleCount: this.verlet.particleCount,
+        substeps: this.verlet.substeps,
+        simWidth: this.simWidth,
+        simHeight: this.simHeight
       },
-      onImpulseChange: (value) => {
-        this.impulse = value;
-      },
-    });
+      () => this.verlet.reset()
+    );
   }
 
   // Calculate viewport to maintain aspect ratio (letterbox/pillarbox)
   updateViewport() {
-    const simAspect = this.simWidth / this.simHeight;
-    const canvasAspect = this.canvas.width / this.canvas.height;
-
-    if (canvasAspect > simAspect) {
-      // Canvas is wider - add pillarboxing (black bars on sides)
-      this.viewportHeight = this.canvas.height;
-      this.viewportWidth = this.canvas.height * simAspect;
-      this.viewportX = (this.canvas.width - this.viewportWidth) / 2;
-      this.viewportY = 0;
-    } else {
-      // Canvas is taller - add letterboxing (black bars on top/bottom)
-      this.viewportWidth = this.canvas.width;
-      this.viewportHeight = this.canvas.width / simAspect;
-      this.viewportX = 0;
-      this.viewportY = (this.canvas.height - this.viewportHeight) / 2;
-    }
+    this.viewport = fitViewport(this.simWidth, this.simHeight, this.canvas.width, this.canvas.height);
   }
 
   // ↙️ Resize swapchain, frame buffer attachments
@@ -356,62 +228,22 @@ export default class Renderer {
   }
 
   async render() {
-    let frame = 0;
-    // this.startFrameMS = performance.timeOrigin + performance.now();
-    // this.lastFrameMS = performance.timeOrigin + performance.now();
-    this.startFrameMS = Date.now();
     this.lastFrameMS = Date.now();
 
-    let clickPointX = 0;
-    let clickPointY = 0;
-    let clickForce = 0;
-
     do {
-      // const now = performance.timeOrigin + performance.now();
-      // const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
-      // const totalTime = (now - this.startFrameMS) / 1000;
-
       const now = Date.now();
-      const deltaTime = Math.min((now - this.lastFrameMS) / 1000, 1 / 60);
-      const totalTime = (now - this.startFrameMS) / 1000;
+      const elapsed = (now - this.lastFrameMS) / 1000;
+      // Never simulate more than one 60 Hz frame at a time
+      const frameTime = Math.min(elapsed, 1 / 60);
 
-      // this.renderStats.updateOverlay((now - this.lastFrameMS) / 1000, this);
+      this.gui.updateFPS(1 / elapsed);
 
-      // Update GUI FPS
-      this.gui.updateFPS(1 / ((now - this.lastFrameMS) / 1000));
-      this.gui.updateParams({
-        doCollision: this.doCollision,
-        paused: this.paused,
-        clickLock: this.clickLock,
-        classicConstrain: this.classicConstrain,
-      });
-
-      // Framerate Protection - if fps drops below 10, turn off collisions
-      // if (1 / ((now - this.lastFrameMS) / 1000) < 10) {
-      //   this.doCollision = false;
-      // }
-
-
-      if (this.leftClickState || this.rightClickState) {
-        clickPointX = this.mousePos[0];
-        clickPointY = this.mousePos[1];
-        clickForce = this.clickForce;
-      } else if (!this.clickLock) {
-        clickPointX = 0;
-        clickPointY = 0;
-        clickForce = 0;
-      }
+      const input = this.controls.frameInput();
 
       let commandEncoder = this.device.createCommandEncoder();
 
-      if (!this.paused) {
-        this.verlet.step(commandEncoder, deltaTime, {
-          clickPoint: [clickPointX, clickPointY],
-          clickForce,
-          constrainRadius: this.constrainRadius,
-          classicConstrain: this.classicConstrain,
-          collide: this.doCollision
-        });
+      if (!this.controls.paused) {
+        this.verlet.step(commandEncoder, frameTime, input);
       }
 
       {
@@ -431,20 +263,20 @@ export default class Renderer {
 
         // Set viewport to maintain aspect ratio (letterbox/pillarbox)
         passEncoder.setViewport(
-          this.viewportX,
-          this.viewportY,
-          this.viewportWidth,
-          this.viewportHeight,
+          this.viewport.x,
+          this.viewport.y,
+          this.viewport.width,
+          this.viewport.height,
           0,
           1
         );
 
         // Set scissor to match viewport
         passEncoder.setScissorRect(
-          Math.floor(this.viewportX),
-          Math.floor(this.viewportY),
-          Math.floor(this.viewportWidth),
-          Math.floor(this.viewportHeight)
+          Math.floor(this.viewport.x),
+          Math.floor(this.viewport.y),
+          Math.floor(this.viewport.width),
+          Math.floor(this.viewport.height)
         );
 
         passEncoder.setPipeline(this.fullscreenQuadPipeline);
@@ -454,14 +286,12 @@ export default class Renderer {
       }
 
       this.queue.submit([commandEncoder.finish()]);
-  
-      // Wait for repaint
+
       this.lastFrameMS = now;
-      
+
       // vsync
-      this.inputs.tick();
+      this.tickInputs();
       await this.sleep();
-      // await this.queue.onSubmittedWorkDone();
     } while (this.running);
   }
 
