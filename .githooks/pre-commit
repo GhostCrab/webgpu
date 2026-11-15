@@ -1,0 +1,10 @@
+#!/bin/sh
+# Guardrail: type-check and test before every commit. Enabled by `npm install`
+# (the prepare script points core.hooksPath here).
+set -e
+
+# Vitest needs an upper-case drive letter on Windows; pwd -W gives one.
+cd "$(pwd -W 2>/dev/null || pwd)"
+
+npm run --silent typecheck
+npm test --silent

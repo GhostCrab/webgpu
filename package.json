@@ -7,13 +7,14 @@
         "node": ">=21"
     },
     "scripts": {
-        "start": "npm i && npm run build && npm run dev",
+        "start": "npm i && npm run dev",
         "serve": "http-server",
         "dev": "concurrently \"cross-env NODE_ENV=development ts-node webpack.ts --watch\" \"http-server\"",
         "prod": "concurrently \"cross-env NODE_ENV=production ts-node webpack.ts --watch\" \"http-server\"",
         "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts",
         "test": "vitest run --root .",
-        "typecheck": "tsc --noEmit"
+        "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+        "prepare": "git config core.hooksPath .githooks"
     },
     "repository": {
         "type": "git",
