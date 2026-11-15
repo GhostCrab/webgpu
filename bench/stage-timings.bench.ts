@@ -107,8 +107,8 @@ it('benchmark', { timeout: 30 * 60_000 }, async () => {
   });
 
   const { version } = createRequire(import.meta.url)('webgpu/package.json');
-  const { vendor, architecture, description } = adapter.info;
-  console.log(`GPU: ${[vendor, architecture, description].filter(Boolean).join(' / ')}`);
+  const { vendor, architecture, device: name, description } = adapter.info;
+  console.log(`GPU: ${[name, vendor, architecture, description].filter(Boolean).join(' / ')}`);
   console.log(`Runtime: Node ${process.version}, Dawn via the webgpu package ${version}`);
   console.log(
     `Each scene: ${MEASURED_SUBSTEPS} substeps at ${DEFAULT_SUBSTEP_RATE} per second, ` +
