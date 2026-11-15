@@ -1,6 +1,4 @@
-import { mat4 } from 'wgpu-matrix';
-
-import { RenderPassDescriptor } from '../src/render-pass-descriptor';
+import { SimulationTarget } from '../src/simulation-target';
 import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
 import { Verlet } from '../src/verlet/verlet';
 import { getDevice } from './gpu';
@@ -49,8 +47,8 @@ export interface Sim {
   /** Runs only the binning stage and returns the spatial hash it built. */
   readBinLists(): Promise<{ heads: Int32Array; links: Int32Array }>;
   /**
-   * Draws the particles into a width x height image of the whole simulation
-   * space and returns a lookup for the [r, g, b] bytes of one pixel.
+   * Draws the particles and presents them to a width x height canvas, as the
+   * app does each frame. Returns a lookup for the [r, g, b] bytes of a pixel.
    */
   render(width: number, height: number): Promise<(x: number, y: number) => number[]>;
 }
@@ -104,15 +102,18 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
   const device = await getDevice();
   if (!device) return null;
 
-  // Same projection as the app: centre origin, y down, fixed 3840x2160 space.
-  const simWidth = (BOUNDS * 16) / 9;
-  const projection = mat4.ortho(-simWidth / 2, simWidth / 2, BOUNDS / 2, -BOUNDS / 2, 1.05, -1);
+  // The app's simulation space: 3840x2160, centre origin, y down.
   const format = navigator.gpu.getPreferredCanvasFormat();
+  const target = new SimulationTarget(device, {
+    width: (BOUNDS * 16) / 9,
+    height: BOUNDS,
+    format
+  });
 
   const verlet = new Verlet(device, {
     bounds: BOUNDS,
-    projection: projection as Float32Array,
-    targetFormat: format,
+    projection: target.projection,
+    target: target.drawTarget,
     substeps: SUBSTEPS,
     seed: () =>
       particles.map((p) => ({
@@ -162,13 +163,12 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
     },
 
     async render(width, height) {
-      const target = device.createTexture({
+      const canvas = device.createTexture({
         size: [width, height],
         format,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
       });
-      const passDescriptor = new RenderPassDescriptor(device, width, height);
-      passDescriptor.updateResolveTarget(target.createView());
+      target.resize(width, height);
 
       const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
       const staging = device.createBuffer({
@@ -177,10 +177,8 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
       });
 
       const encoder = device.createCommandEncoder();
-      const pass = encoder.beginRenderPass(passDescriptor);
-      verlet.draw(pass);
-      pass.end();
-      encoder.copyTextureToBuffer({ texture: target }, { buffer: staging, bytesPerRow }, [
+      target.render(encoder, canvas.createView(), (pass) => verlet.draw(pass));
+      encoder.copyTextureToBuffer({ texture: canvas }, { buffer: staging, bytesPerRow }, [
         width,
         height
       ]);

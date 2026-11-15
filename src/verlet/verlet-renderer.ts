@@ -1,12 +1,13 @@
 import { Quad } from '../quad';
+import { DrawTarget } from '../simulation-target';
 import { particleInstanceLayout } from './particle-layout';
 import shaderCode from './shaders/verlet-renderer.wgsl';
 
 export interface VerletRendererOptions {
   /** Maps simulation space to clip space; a 4x4 matrix. */
   projection: Float32Array;
-  /** Format of the colour target the particles are drawn into. */
-  targetFormat: GPUTextureFormat;
+  /** The render pass configuration the particles are drawn into. */
+  target: DrawTarget;
 }
 
 /** Draws particles as instanced quads cut to discs. Internal to Verlet. */
@@ -51,7 +52,7 @@ export class VerletRenderer {
         entryPoint: 'fragment_main',
         targets: [
           {
-            format: options.targetFormat,
+            format: options.target.format,
             blend: {
               color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
               alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' }
@@ -68,10 +69,10 @@ export class VerletRenderer {
       depthStencil: {
         depthWriteEnabled: false,
         depthCompare: 'less',
-        format: 'depth24plus-stencil8'
+        format: options.target.depthStencilFormat
       },
       multisample: {
-        count: 4
+        count: options.target.sampleCount
       }
     });
   }

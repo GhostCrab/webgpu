@@ -5,6 +5,7 @@ import {
   Particle,
   unpackParticles
 } from './particle-layout';
+import { DrawTarget } from '../simulation-target';
 import { VerletBinComputer } from './verlet-bin-computer';
 import { VerletRenderer } from './verlet-renderer';
 
@@ -85,8 +86,8 @@ export interface VerletOptions {
   bounds: number;
   /** Maps simulation space to clip space; a 4x4 matrix. */
   projection: Float32Array;
-  /** Format of the colour target that draw() renders into. */
-  targetFormat: GPUTextureFormat;
+  /** The render pass configuration that draw() renders into. */
+  target: DrawTarget;
   /** Substeps per frame. Defaults to 20. */
   substeps?: number;
   /**
@@ -171,7 +172,7 @@ export class Verlet {
 
     this.renderer = new VerletRenderer(device, {
       projection: options.projection,
-      targetFormat: options.targetFormat
+      target: options.target
     });
   }
 
@@ -202,10 +203,7 @@ export class Verlet {
     }
   }
 
-  /**
-   * Draws the particles. The pass must have a 4x multisampled colour target
-   * of the configured format and a depth24plus-stencil8 attachment.
-   */
+  /** Draws the particles into a pass matching the configured draw target. */
   draw(pass: GPURenderPassEncoder) {
     this.renderer.render(pass, this.particleBuffer, this.particleCount);
   }

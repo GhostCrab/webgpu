@@ -208,4 +208,28 @@ describe.skipIf(!device)('particle rendering', () => {
     expect(pixel(5, 5)).toEqual([0, 0, 0]);
     expect(pixel(48, 112)).toEqual([0, 0, 0]);
   });
+
+  test('a wider canvas shows the simulation centred, with black bars at the sides', async () => {
+    const sim = await createSim([
+      { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
+      // Hard against the left edge of simulation space.
+      { x: -1800, y: 0, radius: 100, rgb: [1, 0, 0] }
+    ]);
+    // 144 rows fit a 256-wide image, so a 400-wide canvas has 72-pixel bars.
+    const pixel = await sim.render(400, 144);
+
+    expect(pixel(200, 72)).toEqual([0, 255, 0]);
+    expect(pixel(72 + 8, 72)).toEqual([255, 0, 0]);
+    expect(pixel(36, 72)).toEqual([0, 0, 0]);
+    expect(pixel(399 - 36, 72)).toEqual([0, 0, 0]);
+  });
+
+  test('a taller canvas shows the simulation centred, with black bars above and below', async () => {
+    const sim = await createSim([{ x: 0, y: 0, radius: 150, rgb: [0, 1, 0] }]);
+    const pixel = await sim.render(256, 344);
+
+    expect(pixel(128, 172)).toEqual([0, 255, 0]);
+    expect(pixel(128, 50)).toEqual([0, 0, 0]);
+    expect(pixel(128, 343 - 50)).toEqual([0, 0, 0]);
+  });
 });
