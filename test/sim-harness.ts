@@ -1,7 +1,12 @@
+// Imported first: it defines the WebGPU globals the source modules need at load.
+import { getDevice } from './gpu';
+
+import { afterEach } from 'vitest';
+
+import { readBuffer } from '../src/read-buffer';
 import { SimulationTarget } from '../src/simulation-target';
 import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
-import { Verlet } from '../src/verlet/verlet';
-import { getDevice } from './gpu';
+import { scatter, Verlet } from '../src/verlet/verlet';
 
 /**
  * The test surface for the simulation. Tests place particles, step whole
@@ -14,7 +19,6 @@ export const RADIUS = 1.5;
 export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
 export const SUBSTEPS = 20;
 export const FRAME_TIME = 1 / 60;
-
 
 export interface TestParticle {
   x: number;
@@ -65,66 +69,89 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
-/** The app's start state: a uniform scatter over the bounds with a small random velocity. */
+/** The app's own start state, from its scatter function, made reproducible by a seed. */
 export function seededScatter(count: number, seed: number): TestParticle[] {
-  const random = mulberry32(seed);
-  const particles: TestParticle[] = [];
-  for (let i = 0; i < count; i++) {
-    const x = random() * BOUNDS - BOUNDS / 2;
-    const y = random() * BOUNDS - BOUNDS / 2;
-    particles.push({
-      x,
-      y,
-      prevX: x + ((random() - 0.5) * 12) / SUBSTEPS,
-      prevY: y + ((random() - 0.5) * 12) / SUBSTEPS,
-      radius: RADIUS
-    });
-  }
-  return particles;
+  return scatter({
+    count,
+    bounds: BOUNDS,
+    radius: RADIUS,
+    substeps: SUBSTEPS,
+    random: mulberry32(seed)
+  });
 }
 
-export async function readBuffer(device: GPUDevice, source: GPUBuffer): Promise<ArrayBuffer> {
-  const staging = device.createBuffer({
-    size: source.size,
-    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-  });
-  const encoder = device.createCommandEncoder();
-  encoder.copyBufferToBuffer(source, 0, staging, 0, source.size);
-  device.queue.submit([encoder.finish()]);
-  await staging.mapAsync(GPUMapMode.READ);
-  const copy = staging.getMappedRange().slice(0);
-  staging.unmap();
-  staging.destroy();
-  return copy;
-}
+// Each sim holds a full-size simulation target, several hundred MB of GPU
+// memory, so sims are released as soon as the test that made them ends.
+const live: (() => Promise<void>)[] = [];
+afterEach(async () => {
+  for (const dispose of live.splice(0)) {
+    await dispose();
+  }
+});
 
 export async function createSim(particles: TestParticle[]): Promise<Sim | null> {
   const device = await getDevice();
   if (!device) return null;
 
+  // WebGPU reports validation errors asynchronously. Every GPU operation the
+  // harness performs runs inside an error scope, and the scopes are checked
+  // whenever a test reads a result and again when the test ends, so an error
+  // fails the test that caused it.
+  const scopes: Promise<GPUError | null>[] = [];
+  function checked<T>(operation: () => T): T {
+    device.pushErrorScope('validation');
+    try {
+      return operation();
+    } finally {
+      scopes.push(device.popErrorScope());
+    }
+  }
+  async function settle() {
+    for (const error of await Promise.all(scopes.splice(0))) {
+      if (error) throw new Error(`WebGPU validation error: ${error.message}`);
+    }
+  }
+
   // The app's simulation space: 3840x2160, centre origin, y down.
   const format = navigator.gpu.getPreferredCanvasFormat();
-  const target = new SimulationTarget(device, {
-    width: (BOUNDS * 16) / 9,
-    height: BOUNDS,
-    format
+  const { target, verlet } = checked(() => {
+    const target = new SimulationTarget(device, {
+      width: (BOUNDS * 16) / 9,
+      height: BOUNDS,
+      format
+    });
+    try {
+      const verlet = new Verlet(device, {
+        bounds: BOUNDS,
+        projection: target.projection,
+        target: target.drawTarget,
+        substeps: SUBSTEPS,
+        seed: () =>
+          particles.map((p) => ({
+            x: p.x,
+            y: p.y,
+            prevX: p.prevX ?? p.x,
+            prevY: p.prevY ?? p.y,
+            radius: p.radius ?? RADIUS,
+            rgb: p.rgb ?? [1, 1, 1]
+          }))
+      });
+      return { target, verlet };
+    } catch (error) {
+      target.destroy();
+      throw error;
+    }
   });
 
-  const verlet = new Verlet(device, {
-    bounds: BOUNDS,
-    projection: target.projection,
-    target: target.drawTarget,
-    substeps: SUBSTEPS,
-    seed: () =>
-      particles.map((p) => ({
-        x: p.x,
-        y: p.y,
-        prevX: p.prevX ?? p.x,
-        prevY: p.prevY ?? p.y,
-        radius: p.radius ?? RADIUS,
-        rgb: p.rgb ?? [1, 1, 1]
-      }))
+  live.push(async () => {
+    try {
+      await settle();
+    } finally {
+      verlet.destroy();
+      target.destroy();
+    }
   });
+  await settle();
 
   return {
     device,
@@ -132,61 +159,74 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
 
     step(frames, input = {}) {
       for (let f = 0; f < frames; f++) {
-        const encoder = device.createCommandEncoder();
-        verlet.step(encoder, FRAME_TIME, {
-          clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
-          clickForce: input.clickForce ?? 0,
-          constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
-          classicConstrain: input.classicConstrain ?? false,
-          collide: input.collide ?? true
+        checked(() => {
+          const encoder = device.createCommandEncoder();
+          verlet.step(encoder, FRAME_TIME, {
+            clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
+            clickForce: input.clickForce ?? 0,
+            constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
+            classicConstrain: input.classicConstrain ?? false,
+            collide: input.collide ?? true
+          });
+          device.queue.submit([encoder.finish()]);
         });
-        device.queue.submit([encoder.finish()]);
       }
     },
 
-    read() {
-      return verlet.readParticles();
+    async read() {
+      const state = await verlet.readParticles();
+      await settle();
+      return state;
     },
 
     reset() {
-      verlet.reset();
+      checked(() => verlet.reset());
     },
 
     async readBinLists() {
-      const encoder = device.createCommandEncoder();
-      verlet.computer.encodeBinning(encoder);
-      device.queue.submit([encoder.finish()]);
+      checked(() => {
+        const encoder = device.createCommandEncoder();
+        verlet.computer.encodeBinning(encoder);
+        device.queue.submit([encoder.finish()]);
+      });
 
       const heads = new Int32Array(await readBuffer(device, verlet.computer.binBuffer));
       const links = unpackBinLinks(await verlet.readParticleBuffer());
+      await settle();
       return { heads, links };
     },
 
     async render(width, height) {
-      const canvas = device.createTexture({
-        size: [width, height],
-        format,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
-      });
-      target.resize(width, height);
-
       const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
-      const staging = device.createBuffer({
-        size: bytesPerRow * height,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-      });
+      const { canvas, staging } = checked(() => {
+        const canvas = device.createTexture({
+          size: [width, height],
+          format,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
+        });
+        const staging = device.createBuffer({
+          size: bytesPerRow * height,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        });
 
-      const encoder = device.createCommandEncoder();
-      target.render(encoder, canvas.createView(), (pass) => verlet.draw(pass));
-      encoder.copyTextureToBuffer({ texture: canvas }, { buffer: staging, bytesPerRow }, [
-        width,
-        height
-      ]);
-      device.queue.submit([encoder.finish()]);
+        target.resize(width, height);
+        const encoder = device.createCommandEncoder();
+        target.render(encoder, canvas.createView(), (pass) => verlet.draw(pass));
+        encoder.copyTextureToBuffer({ texture: canvas }, { buffer: staging, bytesPerRow }, [
+          width,
+          height
+        ]);
+        device.queue.submit([encoder.finish()]);
+        return { canvas, staging };
+      });
 
       await staging.mapAsync(GPUMapMode.READ);
       const bytes = new Uint8Array(staging.getMappedRange().slice(0));
       staging.unmap();
+      staging.destroy();
+      canvas.destroy();
+      await settle();
+
       const [r, b] = format === 'bgra8unorm' ? [2, 0] : [0, 2];
       return (x, y) => {
         const o = y * bytesPerRow + x * 4;

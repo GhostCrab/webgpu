@@ -142,8 +142,9 @@ describe.skipIf(!device)('binning', () => {
 // The full app scenario. Binning uses atomics, so the order particles are
 // visited in, and therefore float rounding, differs between runs. Individual
 // positions are not reproducible; these aggregate measures are. The ranges are
-// the values measured on the pre-refactor code, widened to several times the
-// run-to-run spread seen across three runs.
+// measured values, widened to several times the run-to-run spread seen across
+// four runs. The same ranges held on the code before the 2026-11 refactor, for
+// an equivalent seeded start.
 describe.skipIf(!device)('15,000 seeded particles', () => {
   test('after one frame the aggregate state matches the recorded baseline', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
@@ -151,10 +152,10 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
-    expect(stats.centreX).toBeCloseTo(2.051, 1); // within 0.05
-    expect(stats.centreY).toBeCloseTo(5.941, 1);
-    expect(stats.meanDistance).toBeCloseTo(785.507, 1);
-    expect(stats.meanSpeed).toBeCloseTo(0.2549, 2); // within 0.005
+    expect(stats.centreX).toBeCloseTo(-2.565, 1); // within 0.05
+    expect(stats.centreY).toBeCloseTo(3.053, 1);
+    expect(stats.meanDistance).toBeCloseTo(786.036, 1);
+    expect(stats.meanSpeed).toBeCloseTo(0.2539, 2); // within 0.005
   });
 
   test('settles into a pile at the bottom of the circle', async () => {
@@ -167,15 +168,15 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     expect(stats.maxDistance).toBeLessThan(DEFAULT_CONSTRAIN_RADIUS - RADIUS + 0.1);
     // At rest.
     expect(stats.meanSpeed).toBeLessThan(0.05);
-    // Piled at the bottom (+y), roughly centred. Baseline: centreY 968.3 to 968.8.
+    // Piled at the bottom (+y), roughly centred. Measured: centreY 968.5 to 969.2.
     expect(stats.centreY).toBeGreaterThan(966);
-    expect(stats.centreY).toBeLessThan(971);
+    expect(stats.centreY).toBeLessThan(972);
     expect(Math.abs(stats.centreX)).toBeLessThan(40);
-    // Baseline: 1008.7 to 1009.5.
-    expect(stats.meanDistance).toBeGreaterThan(1006);
-    expect(stats.meanDistance).toBeLessThan(1012);
-    // Collisions resolved to a small residual overlap. Baseline: mean 0.092,
-    // max 0.76 to 0.83, about 41,600 touching pairs.
+    // Measured: 1005.2 to 1009.4.
+    expect(stats.meanDistance).toBeGreaterThan(1001);
+    expect(stats.meanDistance).toBeLessThan(1014);
+    // Collisions resolved to a small residual overlap. Measured: mean 0.088 to
+    // 0.094, max 0.72 to 0.82, about 41,700 touching pairs.
     expect(stats.meanOverlap).toBeLessThan(0.13);
     expect(stats.maxOverlap).toBeLessThan(1.5);
     expect(stats.overlapPairs).toBeGreaterThan(39000);
