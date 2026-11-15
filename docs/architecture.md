@@ -1,14 +1,14 @@
 # Architecture
 
-Terms such as particle, bin, substep and simulation input are defined in `GLOSSARY.md`. The decisions behind the simulation's design are recorded in `docs/adr/`: a fixed substep and run-to-run determinism ([ADR-0001](adr/0001-run-to-run-determinism-on-a-fixed-substep.md)), the Jacobi gather collision solver ([ADR-0002](adr/0002-jacobi-gather-collision-solver.md)) and the dense counting-sort bin grid ([ADR-0003](adr/0003-dense-counting-sort-bin-grid-not-a-spatial-hash.md)).
+Terms such as particle, bin, substep and simulation input are defined in `GLOSSARY.md`. The decisions behind the simulation's design are recorded in `docs/adr/`: a fixed substep and run-to-run determinism ([ADR-0001](adr/0001-run-to-run-determinism-on-a-fixed-substep.md)), the Jacobi gather collision solver ([ADR-0002](adr/0002-jacobi-gather-collision-solver.md)), the dense counting-sort bin grid ([ADR-0003](adr/0003-dense-counting-sort-bin-grid-not-a-spatial-hash.md)) and simulation space in its own units, drawn through a camera ([ADR-0004](adr/0004-simulation-space-in-its-own-units.md)).
 
-`Renderer` (`src/renderer.ts`) owns the canvas and the frame loop and wires the other modules together. Each frame it asks the controls for the simulation input, asks the clock how many substeps the elapsed time calls for, steps the simulation by that many, and has the target draw and present it.
+`Renderer` (`src/renderer.ts`) owns the canvas and the frame loop and wires the other modules together. Each frame it asks the controls for the simulation input, asks the clock how many substeps the elapsed time calls for, steps the simulation by that many, and has it draw itself straight to the canvas as the camera shows it. On a resize it refits the camera to the canvas.
 
 ```
 input-bindings.ts ─┐
                    ├─> SimulationControls ── SimulationInput ──┐
 gui-wrapper.ts ────┘                                           ├──> Verlet.step()
-   frame timestamp ──> Clock ── substeps ──────────────────────┘    Verlet.draw() <── SimulationTarget.render()
+   frame timestamp ──> Clock ── substeps ──────────────────────┘    Verlet.draw() <── Camera
 ```
 
 ## Clock (`src/clock.ts`)
@@ -21,12 +21,13 @@ Holds the user-adjustable settings (including the substep rate, default 2400 per
 
 ## Simulation (`src/verlet/`)
 
-`Verlet` (`verlet.ts`) is the interface to the simulation: `step(encoder, substeps, input)`, `draw(pass)`, `reset()`, `readParticles()`, `destroy()`. It validates what it is given, owns the params uniform, and holds one `SimulationPipeline` (`simulation-pipeline.ts`), which owns the particles on the GPU and encodes the passes that advance and draw them. `SimulationPipeline` uses `BinGrid` (`bin-grid.ts`) for the bin grid and `VerletRenderer` (`verlet-renderer.ts`) for drawing.
+`Verlet` (`verlet.ts`) is the interface to the simulation: `step(encoder, substeps, input)`, `draw(encoder, view, camera)`, `reset()`, `readParticles()`, `destroy()`. It validates what it is given, owns the params uniform, and holds one `SimulationPipeline` (`simulation-pipeline.ts`), which owns the particles on the GPU and encodes the passes that advance and draw them. `SimulationPipeline` uses `BinGrid` (`bin-grid.ts`) for the bin grid and `VerletRenderer` (`verlet-renderer.ts`) for drawing.
 
 - Particles cross the interface with a position, a velocity in simulation units per second, a radius, a colour and a particle id. A seed's particles take their index as their id, and `readParticles()` returns them ordered by id.
 - `SimulationInput` carries the collision settings (`CollisionSettings` in `collision.ts`, a pure module holding their defaults): the relaxation factor, and restitution and damping for particle impacts. The boundary circle keeps its own restitution and damping, as constants in `common.wgsl`.
 - `step` advances by a whole number of substeps. Each covers `1 / input.substepRate` seconds; the substep rate is the only thing that sets a substep's length, and how substeps are split between calls does not change the result.
 - `step` writes the params uniform once with `queue.writeBuffer`, then encodes the substeps. The write takes effect when the encoder is submitted, so call `step` at most once per submitted encoder.
+- `draw` encodes a render pass that clears the canvas view to black and draws the particles into it, through the camera's projection. It writes the projection with `queue.writeBuffer`, so call it at most once per submitted encoder. The canvas format is a construction option.
 - `step` takes an optional stage timer, used only by the benchmark (`bench/`). With one, each stage of a substep is encoded as its own compute pass carrying the timer's timestamp writes; without one, a substep is a single compute pass.
 - Starting particles come from a `seed` function (default: `scatter`, a random scatter with an injectable random source). `reset()` calls it again. The particle count is derived from the first seeding and is fixed afterwards. The speed limit is the smallest radius among the seeded particles, and `reset()` resizes the bins for the largest.
 - `encodeBinGridBuild` and `readBinGrid` run one bin grid build on its own and read back what it left. They exist for the bin grid's tests.
@@ -91,14 +92,14 @@ Both sums are kept in fixed point (`2^19` steps per bin width), so they do not d
 
 ### Rendering
 
-Particles are instanced quads (`src/quad.ts` supplies vertex buffer slot 0, the particle buffer is slot 1). The vertex shader reads each particle's colour from the colour buffer by particle id. The fragment shader discards outside the unit circle, and the quad is scaled 1.25x the radius with additive blending so neighbouring balls overlap slightly.
+Particles are instanced quads drawn straight to the canvas, at its resolution, by `VerletRenderer` (`src/quad.ts` supplies vertex buffer slot 0, the particle buffer is slot 1). The vertex shader maps simulation space to clip space with the camera's projection, and reads each particle's colour from the colour buffer by particle id. The quad is scaled 1.25x the radius with additive blending, so neighbouring balls overlap slightly. There is no multisampling and no depth or stencil attachment: the fragment shader smooths each disc's edge, fading it out over the last pixel inside the edge, and discards outside it.
 
-## Simulation target (`src/simulation-target.ts`)
+## Camera (`src/camera.ts`)
 
-Owns the fixed-size image (3840x2160) the simulation is drawn into, both 4x multisampled passes, the presentation pipeline and the letterbox viewport.
+Pure functions that fit simulation space to the canvas (ADR-0004). Simulation space is measured in its own units and sized by the boundary circle's starting radius alone: `simulationSize(radius)` is the side of the square, centred on the origin, that holds the circle with a margin of 1/53 of the radius on each side (2160 units for the default radius of 1060). The renderer passes that size to `Verlet` as its bounds and to the camera. No image is sized from it.
 
-- `render(encoder, canvasView, draw)` draws the scene into the image, then presents it to the canvas with its aspect ratio kept.
-- It supplies the projection and the `drawTarget` (format, sample count, depth format) that the simulation's drawing must match.
-- It maps canvas pixels to simulation space for the pointer. Simulation space has its origin at the centre and y pointing down. The letterbox maths are pure functions in `letterbox.ts`.
+- `fitCamera(size, canvasWidth, canvasHeight)` fits the square to the canvas with its proportions kept: it fills the canvas's shorter side, and a canvas of another shape shows more of simulation space along its longer side. A canvas with no area gives a scale of 0, and the renderer then draws nothing.
+- `canvasToSimulation` maps a pointer position in canvas pixels to simulation space, and `simulationToCanvas` is its inverse. Simulation space has its origin at the canvas's centre and y pointing down, so a click lands at the same point in simulation space at any window size.
+- `cameraProjection` is the matrix `Verlet.draw` uses to take simulation space to clip space.
 
-`src/shaders/dimTexture.wgsl` is not wired in. `notes.md` describes how it plus `loadOp: 'load'` would give a motion-blur trail effect; that change belongs in this module.
+An effect that needs the previous frame's image, such as a motion-blur trail, would need an offscreen image again; none exists.

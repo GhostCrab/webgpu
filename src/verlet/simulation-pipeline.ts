@@ -1,11 +1,10 @@
 import { readBuffer } from '../read-buffer';
 import { BinGrid, BinGridSize } from './bin-grid';
-import type { DrawTarget } from '../simulation-target';
 import {
+  COLOR_BYTES,
   packParticles,
   Particle,
   PARTICLE_BYTES,
-  COLOR_BYTES,
   unpackParticles,
   unpackParticlesInPlace
 } from './particle-layout';
@@ -51,10 +50,8 @@ export interface SimulationPipelineOptions {
   minBinSize: number;
   /** The simulation params uniform (the Params struct in common.wgsl). */
   paramsBuffer: GPUBuffer;
-  /** Maps simulation space to clip space; a 4x4 matrix. */
-  projection: Float32Array;
-  /** The render pass configuration the particles are drawn into. */
-  target: DrawTarget;
+  /** Format of the canvas the particles are drawn to. */
+  format: GPUTextureFormat;
 }
 
 function largestRadiusOf(particles: Particle[]): number {
@@ -189,8 +186,7 @@ export class SimulationPipeline {
       this.particleGroups = [particleGroup(a, b), particleGroup(b, a)];
 
       this.renderer = new VerletRenderer(device, {
-        projection: options.projection,
-        target: options.target,
+        format: options.format,
         colorBuffer: this.colorBuffer
       });
     } catch (error) {
@@ -353,9 +349,9 @@ export class SimulationPipeline {
     return unpackParticles(particles, colors);
   }
 
-  /** Draws the particles into a pass matching the configured draw target. */
-  draw(pass: GPURenderPassEncoder) {
-    this.renderer.render(pass, this.particleBuffer, this.particleCount);
+  /** Clears `view` and draws the particles into it, through `projection`. */
+  draw(encoder: GPUCommandEncoder, view: GPUTextureView, projection: Float32Array<ArrayBuffer>) {
+    this.renderer.render(encoder, view, projection, this.particleBuffer, this.particleCount);
   }
 
   destroy() {

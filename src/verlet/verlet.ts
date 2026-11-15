@@ -1,4 +1,4 @@
-import type { DrawTarget } from '../simulation-target';
+import { Camera, cameraProjection } from '../camera';
 import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO } from './capacity';
 import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
 import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
@@ -117,12 +117,13 @@ export interface SimulationInput extends CollisionSettings {
 }
 
 export interface VerletOptions {
-  /** Side of the square region of simulation space that particles may occupy. */
+  /**
+   * Side of the square region of simulation space that particles may occupy,
+   * centred on the origin: `simulationSize` of the boundary circle's radius.
+   */
   bounds: number;
-  /** Maps simulation space to clip space; a 4x4 matrix. */
-  projection: Float32Array;
-  /** The render pass configuration that draw() renders into. */
-  target: DrawTarget;
+  /** Format of the canvas draw() draws to. */
+  format: GPUTextureFormat;
   /**
    * The smallest bin size. The bin buffers are allocated once, for bins this
    * size; bins are one diameter of the largest particle in use wide, but never
@@ -219,8 +220,7 @@ export class Verlet {
         // A bin must be at least as wide as the largest particle.
         minBinSize: options.minBinSize ?? 2 * radii.largest,
         paramsBuffer: this.paramsBuffer,
-        projection: options.projection,
-        target: options.target
+        format: options.format
       });
     } catch (error) {
       // Nothing outside holds a reference yet, so release what was created.
@@ -274,9 +274,13 @@ export class Verlet {
     }
   }
 
-  /** Draws the particles into a pass matching the configured draw target. */
-  draw(pass: GPURenderPassEncoder) {
-    this.pipeline.draw(pass);
+  /**
+   * Encodes a render pass that clears `view`, a canvas of the configured
+   * format, and draws the particles into it as `camera` shows them. Draw at
+   * most once per submitted encoder.
+   */
+  draw(encoder: GPUCommandEncoder, view: GPUTextureView, camera: Camera) {
+    this.pipeline.draw(encoder, view, cameraProjection(camera));
   }
 
   /** The number of live particles. */

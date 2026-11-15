@@ -3,7 +3,7 @@ import { getDevice } from './gpu';
 
 import { afterEach } from 'vitest';
 
-import { SimulationTarget } from '../src/simulation-target';
+import { fitCamera, simulationSize } from '../src/camera';
 import { Particle, SeedParticle } from '../src/verlet/particle-layout';
 import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
 import { BinGridContents, DEFAULT_CAPACITY, scatter, Verlet } from '../src/verlet/verlet';
@@ -16,9 +16,11 @@ export type { BinGridContents };
  * constructed and driven stays in this file.
  */
 
-export const BOUNDS = 2160;
+/** The app's starting boundary circle radius. */
+export const DEFAULT_CONSTRAIN_RADIUS = 1060;
+/** The side of simulation space for that radius: 2160. */
+export const BOUNDS = simulationSize(DEFAULT_CONSTRAIN_RADIUS);
 export const RADIUS = 1.5;
-export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
 /** 20 substeps per 60 Hz frame: half the app's default substep rate. */
 export const SUBSTEP_RATE = 1200;
 // Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
@@ -73,8 +75,9 @@ export interface Sim {
    */
   readBinGrid(): Promise<BinGridContents>;
   /**
-   * Draws the particles and presents them to a width x height canvas, as the
-   * app does each frame. Returns a lookup for the [r, g, b] bytes of a pixel.
+   * Draws the particles to a width x height canvas, fitted by the camera as
+   * the app does each frame. Returns a lookup for the [r, g, b] bytes of a
+   * pixel.
    */
   render(width: number, height: number): Promise<(x: number, y: number) => number[]>;
 }
@@ -101,8 +104,8 @@ export function seededScatter(count: number, seed: number): TestParticle[] {
   });
 }
 
-// Each sim holds a full-size simulation target, several hundred MB of GPU
-// memory, so sims are released as soon as the test that made them ends.
+// Sims are released as soon as the test that made them ends, since the
+// largest hold hundreds of MB of particle and bin buffers.
 const live: (() => Promise<void>)[] = [];
 afterEach(async () => {
   // Every sim is released even when one reports an error.
@@ -114,6 +117,11 @@ afterEach(async () => {
 export interface SimOptions {
   /** The smallest bin size. Defaults to the largest particle's diameter. */
   minBinSize?: number;
+  /**
+   * The boundary circle's radius, which sets the size of simulation space and
+   * is the default constrain radius of every step. Defaults to the app's.
+   */
+  boundaryRadius?: number;
   /** The most particles the simulation holds. Defaults to the app's, or the seed's size if larger. */
   capacity?: number;
 }
@@ -165,36 +173,25 @@ export async function createSim(
     return pending;
   }
 
-  // The app's simulation space: 3840x2160, centre origin, y down.
+  const boundaryRadius = options.boundaryRadius ?? DEFAULT_CONSTRAIN_RADIUS;
+  const bounds = simulationSize(boundaryRadius);
   const format = navigator.gpu.getPreferredCanvasFormat();
-  const { target, verlet } = checked(() => {
-    const target = new SimulationTarget(device, {
-      width: (BOUNDS * 16) / 9,
-      height: BOUNDS,
-      format
-    });
-    try {
-      const verlet = new Verlet(device, {
-        bounds: BOUNDS,
-        projection: target.projection,
-        target: target.drawTarget,
+  const verlet = checked(
+    () =>
+      new Verlet(device, {
+        bounds,
+        format,
         minBinSize: options.minBinSize,
         capacity: options.capacity ?? Math.max(particles.length, DEFAULT_CAPACITY),
         seed: () => particles.map(toSeedParticle)
-      });
-      return { target, verlet };
-    } catch (error) {
-      target.destroy();
-      throw error;
-    }
-  });
+      })
+  );
 
   live.push(async () => {
     try {
       await settle();
     } finally {
       verlet.destroy();
-      target.destroy();
     }
   });
   await settle();
@@ -216,7 +213,7 @@ export async function createSim(
           verlet.step(encoder, Math.min(SUBSTEPS_PER_SUBMIT, substeps - done), {
             clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
             clickForce: input.clickForce ?? 0,
-            constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
+            constrainRadius: input.constrainRadius ?? boundaryRadius,
             constrainCenter: input.constrainCenter,
             classicConstrain: input.classicConstrain ?? false,
             collide: input.collide ?? true,
@@ -261,9 +258,8 @@ export async function createSim(
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
         });
 
-        target.resize(width, height);
         const encoder = device.createCommandEncoder();
-        target.render(encoder, () => canvas.createView(), (pass) => verlet.draw(pass));
+        verlet.draw(encoder, canvas.createView(), fitCamera(bounds, width, height));
         encoder.copyTextureToBuffer({ texture: canvas }, { buffer: staging, bytesPerRow }, [
           width,
           height

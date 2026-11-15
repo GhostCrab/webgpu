@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest';
 
 import { getDevice } from './gpu';
 
-import { SimulationTarget } from '../src/simulation-target';
 import {
   createSim,
   DEFAULT_CONSTRAIN_RADIUS,
@@ -491,13 +490,12 @@ describe.skipIf(!device)('collisions', () => {
 
 describe.skipIf(!device)('particle rendering', () => {
   test('draws each particle as a disc of its colour at its position', async () => {
-    // A 256x144 image of the 3840x2160 space: 15 simulation units per pixel.
-    const sim = await createSim(
-      [
-        { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
-        { x: -1200, y: -600, radius: 150, rgb: [1, 0, 0] }
-      ]
-    );
+    // A 256x144 canvas fits the 2160-unit square of simulation space to its
+    // height: 15 simulation units per pixel.
+    const sim = await createSim([
+      { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
+      { x: -1200, y: -600, radius: 150, rgb: [1, 0, 0] }
+    ]);
     const pixel = await sim.render(256, 144);
 
     expect(pixel(128, 72)).toEqual([0, 255, 0]);
@@ -509,13 +507,11 @@ describe.skipIf(!device)('particle rendering', () => {
 
   test('particles keep their colours while the bin grid reorders them every substep', async () => {
     // Bin order runs left to right; particle id order does not.
-    const sim = await createSim(
-      [
-        { x: 900, y: 0, radius: 150, rgb: [1, 0, 0] },
-        { x: -900, y: 0, radius: 150, rgb: [0, 1, 0] },
-        { x: 0, y: 0, radius: 150, rgb: [0, 0, 1] }
-      ]
-    );
+    const sim = await createSim([
+      { x: 900, y: 0, radius: 150, rgb: [1, 0, 0] },
+      { x: -900, y: 0, radius: 150, rgb: [0, 1, 0] },
+      { x: 0, y: 0, radius: 150, rgb: [0, 0, 1] }
+    ]);
     // An odd number of substeps, so the particles end in the other buffer.
     sim.step(3);
     const pixel = await sim.render(256, 144);
@@ -525,43 +521,85 @@ describe.skipIf(!device)('particle rendering', () => {
     expect(pixel(128, 72)).toEqual([0, 0, 255]);
   });
 
-  test('a wider canvas shows the simulation centred, with black bars at the sides', async () => {
+  test('a wider canvas shows more of simulation space at the same scale', async () => {
     const sim = await createSim([
       { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
-      // Hard against the left edge of simulation space.
-      { x: -1800, y: 0, radius: 100, rgb: [1, 0, 0] }
+      // Inside the fitted square, near its left edge.
+      { x: -1800, y: 0, radius: 100, rgb: [1, 0, 0] },
+      // Beyond the fitted square, which a wider canvas also shows.
+      { x: -2700, y: 0, radius: 100, rgb: [0, 0, 1] }
     ]);
-    // 144 rows fit a 256-wide image, so a 400-wide canvas has 72-pixel bars.
+    // Still 15 units per pixel: 144 rows fit the square's 2160 units.
     const pixel = await sim.render(400, 144);
 
     expect(pixel(200, 72)).toEqual([0, 255, 0]);
-    expect(pixel(72 + 8, 72)).toEqual([255, 0, 0]);
-    expect(pixel(36, 72)).toEqual([0, 0, 0]);
+    expect(pixel(200 - 120, 72)).toEqual([255, 0, 0]);
+    expect(pixel(200 - 180, 72)).toEqual([0, 0, 255]);
     expect(pixel(399 - 36, 72)).toEqual([0, 0, 0]);
   });
 
-  test('a canvas with no area is skipped without asking for a canvas view or drawing', async () => {
-    const target = new SimulationTarget(device, { width: 3840, height: 2160, format: 'bgra8unorm' });
-    try {
-      const never = () => {
-        throw new Error('nothing should be presented to a canvas with no area');
-      };
-      for (const [width, height] of [[0, 0], [800, 0], [NaN, 600]]) {
-        target.resize(width, height);
-        target.render(device.createCommandEncoder(), never, never);
-        expect(target.toSimulation(10, 10)).toEqual([0, 0]);
-      }
-    } finally {
-      target.destroy();
-    }
-  });
-
-  test('a taller canvas shows the simulation centred, with black bars above and below', async () => {
-    const sim = await createSim([{ x: 0, y: 0, radius: 150, rgb: [0, 1, 0] }]);
+  test('a taller canvas shows more of simulation space above and below', async () => {
+    const sim = await createSim([
+      { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },
+      // Beyond the top of the fitted square.
+      { x: 0, y: -1300, radius: 100, rgb: [1, 0, 0] }
+    ]);
+    // 256 columns fit the square's 2160 units: 8.4375 units per pixel.
     const pixel = await sim.render(256, 344);
 
     expect(pixel(128, 172)).toEqual([0, 255, 0]);
-    expect(pixel(128, 50)).toEqual([0, 0, 0]);
-    expect(pixel(128, 343 - 50)).toEqual([0, 0, 0]);
+    expect(pixel(128, Math.round(172 - 1300 / 8.4375))).toEqual([255, 0, 0]);
+    expect(pixel(128, 343 - 18)).toEqual([0, 0, 0]);
+  });
+
+  test('looks the same, scaled to fit, at 1080p and at 4K', async () => {
+    const particles = [
+      { x: 0, y: 0, radius: 40, rgb: [0, 1, 0] as [number, number, number] },
+      { x: -700, y: 300, radius: 60, rgb: [1, 0, 0] as [number, number, number] },
+      { x: 1500, y: -900, radius: 30, rgb: [0, 0, 1] as [number, number, number] }
+    ];
+    const sim = await createSim(particles);
+    const at1080p = await sim.render(1920, 1080);
+    const at4k = await sim.render(3840, 2160);
+
+    // 2 units per pixel at 1080p, 1 at 4K, with the origin at the centre.
+    for (const p of particles) {
+      const colour = p.rgb.map((c) => c * 255);
+      for (const [dx, dy] of [[0, 0], [0.8, 0], [0, -0.8], [-0.5, 0.5]]) {
+        const x = p.x + dx * p.radius;
+        const y = p.y + dy * p.radius;
+        expect(at1080p(960 + Math.round(x / 2), 540 + Math.round(y / 2))).toEqual(colour);
+        expect(at4k(1920 + Math.round(x), 1080 + Math.round(y))).toEqual(colour);
+      }
+      // Background just outside the drawn disc, which is 1.25x the radius.
+      const outside = p.x + 1.6 * p.radius;
+      expect(at1080p(960 + Math.round(outside / 2), 540 + Math.round(p.y / 2))).toEqual([0, 0, 0]);
+      expect(at4k(1920 + Math.round(outside), 1080 + Math.round(p.y))).toEqual([0, 0, 0]);
+    }
+  });
+
+  test('changing the boundary circle radius resizes simulation space, not the image', async () => {
+    // The same scene in proportion to two boundary circles, drawn to one canvas size.
+    const scene = (r: number) => [
+      { x: 0.5 * r, y: 0, radius: 0.1 * r, rgb: [1, 0, 0] as [number, number, number] },
+      { x: 0, y: -0.5 * r, radius: 0.1 * r, rgb: [0, 1, 0] as [number, number, number] }
+    ];
+    const large = await (await createSim(scene(1060), { boundaryRadius: 1060 })).render(256, 256);
+    const small = await (await createSim(scene(265), { boundaryRadius: 265 })).render(256, 256);
+
+    // Disc edges may differ by a rounding step.
+    let largestDifference = 0;
+    for (let y = 0; y < 256; y++) {
+      for (let x = 0; x < 256; x++) {
+        const [a, b] = [small(x, y), large(x, y)];
+        for (let c = 0; c < 3; c++) {
+          largestDifference = Math.max(largestDifference, Math.abs(a[c] - b[c]));
+        }
+      }
+    }
+    expect(largestDifference).toBeLessThanOrEqual(2);
+    // Half the radius to the right is a quarter of the canvas, less the margin.
+    expect(large(128 + 62, 128)).toEqual([255, 0, 0]);
+    expect(large(128, 128 - 62)).toEqual([0, 255, 0]);
   });
 });

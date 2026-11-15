@@ -1,13 +1,14 @@
+import { Camera, canvasToSimulation, fitCamera, simulationSize } from './camera';
 import { Clock } from './clock';
 import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
 import { SimulationControls } from './simulation-controls';
-import { SimulationTarget } from './simulation-target';
 import { Verlet } from './verlet/verlet';
 
-// Fixed simulation resolution - physics will always run at 4K
-const SIMULATION_WIDTH = 3840;
-const SIMULATION_HEIGHT = 2160;
+// The boundary circle's starting radius. It alone sets the size of simulation
+// space, which the camera fits to the canvas.
+const BOUNDARY_RADIUS = 1060;
+const SIMULATION_SIZE = simulationSize(BOUNDARY_RADIUS);
 
 /** Owns the canvas and the frame loop, and wires the other modules together. */
 export default class Renderer {
@@ -23,14 +24,14 @@ export default class Renderer {
 
   controls: SimulationControls;
   clock = new Clock();
-  target: SimulationTarget;
+  camera: Camera = fitCamera(SIMULATION_SIZE, 0, 0);
   verlet: Verlet;
   gui: GuiWrapper;
   tickInputs: () => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.controls = new SimulationControls({ constrainRadius: SIMULATION_HEIGHT / 2 - 20 });
+    this.controls = new SimulationControls({ constrainRadius: BOUNDARY_RADIUS });
   }
 
   // 🏎️ Start the rendering engine
@@ -66,7 +67,7 @@ export default class Renderer {
     return true;
   }
 
-  // 🍱 Initialize resources (swapchain, render target, the simulation, inputs)
+  // 🍱 Initialize resources (swapchain, the simulation, inputs)
   initializeResources() {
     const format = navigator.gpu.getPreferredCanvasFormat();
 
@@ -79,13 +80,6 @@ export default class Renderer {
       alphaMode: 'premultiplied'
     });
 
-    // The simulation occupies a FIXED space, not the canvas size
-    this.target = new SimulationTarget(this.device, {
-      width: SIMULATION_WIDTH,
-      height: SIMULATION_HEIGHT,
-      format
-    });
-
     this.resizeCanvas();
     window.addEventListener('resize', () => this.resizeCanvas());
 
@@ -93,7 +87,8 @@ export default class Renderer {
 
     this.tickInputs = bindInputs(this.controls, {
       toSimulation: (pageX, pageY) =>
-        this.target.toSimulation(
+        canvasToSimulation(
+          this.camera,
           pageX * window.devicePixelRatio,
           pageY * window.devicePixelRatio
         ),
@@ -104,8 +99,7 @@ export default class Renderer {
       this.controls,
       {
         particleCount: this.verlet.particleCount,
-        simWidth: SIMULATION_WIDTH,
-        simHeight: SIMULATION_HEIGHT
+        simulationSize: SIMULATION_SIZE
       },
       () => this.verlet.reset(),
       () => this.restart()
@@ -115,9 +109,8 @@ export default class Renderer {
   /** A new simulation, at the capacity the controls hold. */
   createSimulation(): Verlet {
     return new Verlet(this.device, {
-      bounds: SIMULATION_HEIGHT,
-      projection: this.target.projection,
-      target: this.target.drawTarget,
+      bounds: SIMULATION_SIZE,
+      format: navigator.gpu.getPreferredCanvasFormat(),
       capacity: Math.round(this.controls.capacity)
     });
   }
@@ -132,7 +125,7 @@ export default class Renderer {
   resizeCanvas() {
     this.canvas.width = this.canvas.clientWidth * window.devicePixelRatio;
     this.canvas.height = this.canvas.clientHeight * window.devicePixelRatio;
-    this.target.resize(this.canvas.width, this.canvas.height);
+    this.camera = fitCamera(SIMULATION_SIZE, this.canvas.width, this.canvas.height);
   }
 
   async render() {
@@ -157,11 +150,11 @@ export default class Renderer {
       this.gui.updateFrame(1 / elapsed, tick);
       this.gui.updateParticles(this.verlet.particleCount, this.verlet.capacity);
 
-      this.target.render(
-        commandEncoder,
-        () => this.context.getCurrentTexture().createView(),
-        (pass) => this.verlet.draw(pass)
-      );
+      // A hidden or collapsed canvas has no area and nothing to draw to.
+      if (this.camera.scale > 0) {
+        const view = this.context.getCurrentTexture().createView();
+        this.verlet.draw(commandEncoder, view, this.camera);
+      }
 
       this.queue.submit([commandEncoder.finish()]);
 

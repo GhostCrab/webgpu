@@ -75,8 +75,12 @@ _Avoid_: Impulse, mouse force
 A mode in which the click force stays active after the mouse button is released.
 
 **Simulation space**:
-The coordinate space particles live in, measured in its own units, with its origin at the centre and y pointing down. It does not change with the window or the display.
+The coordinate space particles live in, measured in its own units, with its origin at the centre and y pointing down. Its size is set by the boundary circle's radius; it does not change with the window or the display.
 _Avoid_: World space, sim resolution
+
+**Camera**:
+The mapping between simulation space and the canvas: it fits simulation space to the canvas with its proportions kept, and maps the pointer back.
+_Avoid_: Viewport, letterbox
 
 ### Modules
 
@@ -89,7 +93,3 @@ _Avoid_: Params, sim params
 
 **Simulation controls**:
 The user-adjustable state of the simulation and the rules that turn mouse and keyboard actions into simulation input.
-
-**Simulation target**:
-The fixed-size image the simulation is drawn into before being fitted to the window.
-_Avoid_: Render texture, offscreen target

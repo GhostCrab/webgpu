@@ -1,6 +1,7 @@
-// Draws each particle as an instanced quad cut to a disc. The particle buffer
-// is read as per-instance vertex attributes, and each particle's colour is
-// looked up in the colour buffer by particle id.
+// Draws each particle as an instanced quad cut to a disc, straight to the
+// canvas. The particle buffer is read as per-instance vertex attributes, and
+// each particle's colour is looked up in the colour buffer by particle id.
+// There is no multisampling: the disc's edge is smoothed here instead.
 
 @group(0) @binding(0) var<uniform> mvp: mat4x4<f32>;
 @group(0) @binding(1) var<storage, read> colors: array<u32>;
@@ -36,11 +37,22 @@ fn fragment_main(
     @location(1) fragUV : vec2<f32>,
     @location(2) @interpolate(flat) cull : u32
   ) -> @location(0) vec4f {
+  // Distance from the disc's centre, 1 at its edge.
+  let fromCentre = length(fragUV - 0.5) * 2;
+  // How far that changes across one pixel. Taken before any discard,
+  // since derivatives need every fragment of the quad.
+  let perPixel = max(fwidth(fromCentre), 1e-6);
+
   if (cull == 1) {discard;};
 
-  if (length(fragUV - 0.5) > 0.5) {
+  // The share of the pixel the disc covers, approximately: opaque from half a
+  // pixel inside the edge, half at the edge. The quad ends at the edge, so the
+  // outer half pixel of the fade is cut off all round, corners included. A
+  // disc under a pixel across stays about as bright as its area.
+  if (fromCentre > 1) {
     discard;
   }
+  let coverage = clamp((1 - fromCentre) / perPixel + 0.5, 0, 1);
 
-  return color;
+  return vec4f(color.rgb, coverage);
 }

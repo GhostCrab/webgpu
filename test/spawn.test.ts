@@ -49,7 +49,8 @@ describe.skipIf(!device)('spawning', () => {
   });
 
   test('spawned particles are drawn in their colour at their position', async () => {
-    // A 256x144 image of the 3840x2160 space: 15 simulation units per pixel.
+    // A 256x144 canvas fits the 2160-unit square of simulation space to its
+    // height: 15 simulation units per pixel.
     const sim = await createSim([{ x: 0, y: 0, radius: 150, rgb: [0, 1, 0] }]);
     sim.spawn([{ x: -600, y: -150, radius: 150, rgb: [1, 0, 0] }]);
     const pixel = await sim.render(256, 144);

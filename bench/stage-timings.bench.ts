@@ -63,9 +63,8 @@ async function run(device: GPUDevice, verlet: Verlet, substeps: number, timer?: 
 async function measure(device: GPUDevice, count: number, timestamps: boolean): Promise<BenchResult> {
   const verlet = new Verlet(device, {
     bounds: BOUNDS,
-    // Nothing is drawn, but the simulation is built with a draw target.
-    projection: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
-    target: { format: 'bgra8unorm', sampleCount: 1, depthStencilFormat: 'depth24plus' },
+    // Nothing is drawn, but the simulation is built for a canvas format.
+    format: 'bgra8unorm',
     capacity: count,
     seed: () =>
       scatter({

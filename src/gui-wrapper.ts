@@ -11,8 +11,8 @@ declare const lil: any;
 
 export interface GuiStats {
   particleCount: number;
-  simWidth: number;
-  simHeight: number;
+  /** Side of the square of simulation space, in its own units. */
+  simulationSize: number;
 }
 
 /**
@@ -26,7 +26,7 @@ export default class GuiWrapper {
     fps: string | number;
     particleCount: string;
     substeps: string;
-    simResolution: string;
+    simulationSize: string;
   };
 
   /** `onRestart` makes a new simulation, at the capacity now set. */
@@ -42,13 +42,13 @@ export default class GuiWrapper {
       fps: 0,
       particleCount: `${stats.particleCount} / ${controls.capacity}`,
       substeps: '0 / 0',
-      simResolution: `${stats.simWidth}x${stats.simHeight}`
+      simulationSize: `${stats.simulationSize} units`
     };
     const statsFolder = this.gui.addFolder('Stats');
     statsFolder.add(this.stats, 'fps').disable().listen();
     statsFolder.add(this.stats, 'particleCount').name('Particles / capacity').disable().listen();
     statsFolder.add(this.stats, 'substeps').name('Substeps run / wanted').disable().listen();
-    statsFolder.add(this.stats, 'simResolution').name('Sim Resolution').disable();
+    statsFolder.add(this.stats, 'simulationSize').name('Simulation Size').disable();
 
     // listen() keeps the panel in step when a keyboard shortcut changes a setting.
     const simulation = this.gui.addFolder('Simulation');
