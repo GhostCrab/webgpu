@@ -3,7 +3,9 @@ import { describe, expect, test } from 'vitest';
 import { getDevice } from './gpu';
 
 import { SimulationTarget } from '../src/simulation-target';
+import { binGrid } from '../src/verlet/verlet-bin-computer';
 import {
+  BOUNDS,
   createSim,
   DEFAULT_CONSTRAIN_RADIUS,
   RADIUS,
@@ -91,6 +93,61 @@ describe.skipIf(!device)('one particle', () => {
   });
 });
 
+// No particle moves further than the smallest particle's radius in one
+// substep. The last thing a substep does is move each particle, so after a
+// substep the gap between position and previous position is that move.
+describe.skipIf(!device)('the speed limit', () => {
+  const small = 1;
+  const distance = (p: { x: number; y: number }, q: { x: number; y: number }) =>
+    Math.hypot(p.x - q.x, p.y - q.y);
+
+  test('a fast particle moves no further than the smallest radius per substep', async () => {
+    // 40 units per substep to the right, which stays clear of the boundary
+    // circle for a whole frame; the smallest radius is 1.
+    const sim = await createSim([
+      { x: 0, y: 0, prevX: -40, prevY: 0, radius: 3 },
+      { x: 0, y: 500, radius: small }
+    ]);
+    sim.step(1, { collide: false });
+    let [p] = await sim.read();
+    expect([p.prevX, p.prevY]).toEqual([0, 0]);
+    // Shortened to exactly the limit, still heading right.
+    expect(distance(p, { x: 0, y: 0 })).toBeCloseTo(small, 4);
+    expect(p.x).toBeGreaterThan(0.99);
+
+    sim.step(FRAME - 1, { collide: false });
+    [p] = await sim.read();
+    expect(distance(p, { x: p.prevX, y: p.prevY })).toBeLessThanOrEqual(small + 1e-4);
+    expect(distance(p, { x: 0, y: 0 })).toBeLessThanOrEqual(FRAME * small + 1e-3);
+  });
+
+  test('the strongest click force, held, saturates at the limit', async () => {
+    const sim = await createSim([
+      { x: -800, y: 0 },
+      { x: 0, y: -800 },
+      { x: 300, y: 300 }
+    ]);
+    // 10,000 is the most the settings panel allows. Every substep's move is
+    // checked, for 30 frames' worth of substeps.
+    for (let substep = 0; substep < 30 * FRAME; substep++) {
+      sim.step(1, { clickX: 0, clickY: 0, clickForce: 10000 });
+      for (const p of await sim.read()) {
+        expect(Number.isFinite(p.x + p.y + p.prevX + p.prevY)).toBe(true);
+        expect(distance(p, { x: p.prevX, y: p.prevY })).toBeLessThanOrEqual(RADIUS + 1e-4);
+      }
+    }
+  });
+});
+
+describe.skipIf(!device)('a particle exactly at the click point', () => {
+  test.each([2000, -2000])('receives no click force and stays finite (force %s)', async (clickForce) => {
+    const sim = await createSim([{ x: 100, y: 50 }]);
+    sim.step(FRAME, { clickX: 100, clickY: 50, clickForce });
+    const [p] = await sim.read();
+    expect([p.x, p.y, p.prevX, p.prevY]).toEqual([100, 50, 100, 50]);
+  });
+});
+
 describe.skipIf(!device)('two overlapping particles', () => {
   const pair = [
     { x: -1, y: 0 },
@@ -106,6 +163,21 @@ describe.skipIf(!device)('two overlapping particles', () => {
     // Collision only acts along the line between them; both still fall alike.
     expect(a.y).toBeCloseTo(ONE_FRAME_DROP, 5);
     expect(b.y).toBeCloseTo(ONE_FRAME_DROP, 5);
+  });
+
+  test('separate along a fixed direction, and stay finite, when exactly coincident', async () => {
+    const sim = await createSim([
+      { x: 10, y: 0 },
+      { x: 10, y: 0 }
+    ]);
+    sim.step(FRAME);
+    const [a, b] = await sim.read();
+    for (const p of [a, b]) {
+      expect(Number.isFinite(p.x + p.y + p.prevX + p.prevY)).toBe(true);
+    }
+    expect(Math.abs(b.x - a.x)).toBeGreaterThan(RADIUS);
+    expect(a.x + b.x).toBeCloseTo(20, 4);
+    expect(a.y).toBeCloseTo(b.y, 5);
   });
 
   test('pass through each other when collision is off', async () => {
@@ -241,14 +313,45 @@ describe.skipIf(!device)('binning', () => {
     }
     expect(visited).toBe(count);
   });
+
+  test('puts a particle outside the bin grid in the nearest edge bin', async () => {
+    const { width, height, binSize } = binGrid(BOUNDS, 2 * RADIUS);
+    const edge = (width * binSize) / 2;
+    // Beyond the right, left and bottom edges, and beyond a corner, each in a
+    // row or column where a wrapped index would land in the wrong bin.
+    const outside = [
+      { x: edge + 50, y: 0 },
+      { x: -edge - 50, y: 100 },
+      { x: 200, y: edge + 50 },
+      { x: -edge - 5000, y: -edge - 5000 }
+    ];
+    const expected = [
+      [width - 1, height / 2],
+      [0, height / 2 + Math.floor(100 / binSize)],
+      [width / 2 + Math.floor(200 / binSize), height - 1],
+      [0, 0]
+    ];
+    const sim = await createSim([...outside, { x: 0, y: 0 }]);
+    const { heads, links } = await sim.readBinLists();
+
+    const binOf = new Map<number, [number, number]>();
+    for (let bin = 0; bin < heads.length; bin++) {
+      for (let i = heads[bin]; i !== -1; i = links[i]) {
+        expect(binOf.has(i)).toBe(false);
+        binOf.set(i, [bin % width, Math.floor(bin / width)]);
+      }
+    }
+    expect(binOf.size).toBe(outside.length + 1);
+    expect(outside.map((_, i) => binOf.get(i))).toEqual(expected);
+  });
 });
 
 // The full app scenario. Binning uses atomics, so the order particles are
 // visited in, and therefore float rounding, differs between runs. Individual
 // positions are not reproducible; these aggregate measures are. The ranges are
 // measured values, widened to several times the run-to-run spread seen across
-// four runs, and were last re-measured when the reflective constrain became a
-// true bounce.
+// four runs. They were last re-measured with the speed limit, the non-finite
+// guards and the reflective constrain as a true bounce all in place.
 describe.skipIf(!device)('15,000 seeded particles', () => {
   test('after one frame the aggregate state matches the recorded baseline', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
@@ -256,21 +359,15 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
-    // Measured after the reflective constrain became a true bounce (2026-11):
-    // the scatter's corners start outside the circle and are placed on it.
-    expect(stats.centreX).toBeCloseTo(-2.407, 1); // within 0.05
-    expect(stats.centreY).toBeCloseTo(3.044, 1);
-    expect(stats.meanDistance).toBeCloseTo(786.322, 1);
-    expect(stats.meanSpeed).toBeCloseTo(0.4306, 2); // within 0.005
+    expect(stats.centreX).toBeCloseTo(-2.403, 1); // within 0.05
+    expect(stats.centreY).toBeCloseTo(3.114, 1);
+    expect(stats.meanDistance).toBeCloseTo(787.063, 1);
+    expect(stats.meanSpeed).toBeCloseTo(0.3651, 2); // within 0.005
   });
 
-  // Under the classic constrain. The reflective constrain no longer damps all
-  // motion at the boundary, and without a speed limit a few particles there
-  // reach 10 to 20 units per substep and tunnel, so that pile does not come
-  // to rest. With a speed limit of the radius per substep it does.
   test('settles into a pile at the bottom of the circle', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(300 * FRAME, { classicConstrain: true });
+    sim.step(300 * FRAME);
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
@@ -278,15 +375,15 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     expect(stats.maxDistance).toBeLessThan(DEFAULT_CONSTRAIN_RADIUS - RADIUS + 0.1);
     // At rest.
     expect(stats.meanSpeed).toBeLessThan(0.05);
-    // Piled at the bottom (+y), roughly centred. Measured: centreY 959.3 to 959.8.
-    expect(stats.centreY).toBeGreaterThan(956);
-    expect(stats.centreY).toBeLessThan(963);
+    // Piled at the bottom (+y), roughly centred. Measured: centreY 970.4 to 970.7.
+    expect(stats.centreY).toBeGreaterThan(967);
+    expect(stats.centreY).toBeLessThan(974);
     expect(Math.abs(stats.centreX)).toBeLessThan(40);
-    // Measured: 1007.7 to 1010.1.
-    expect(stats.meanDistance).toBeGreaterThan(1003);
-    expect(stats.meanDistance).toBeLessThan(1015);
-    // Collisions resolved to a small residual overlap. Measured: mean 0.091 to
-    // 0.095, max 0.75 to 0.79, about 41,000 touching pairs.
+    // Measured: 1003.4 to 1004.5.
+    expect(stats.meanDistance).toBeGreaterThan(999);
+    expect(stats.meanDistance).toBeLessThan(1009);
+    // Collisions resolved to a small residual overlap. Measured: mean 0.085 to
+    // 0.089, max 0.81 to 0.91, about 42,200 touching pairs.
     expect(stats.meanOverlap).toBeLessThan(0.13);
     expect(stats.maxOverlap).toBeLessThan(1.5);
     expect(stats.overlapPairs).toBeGreaterThan(39000);

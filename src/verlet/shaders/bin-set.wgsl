@@ -11,9 +11,12 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   
   var pos = verletObjects[voIndex].pos.xy;
 
-  var binx = i32((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
-  var biny = i32((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size));
-  
+  // A particle outside the bin grid goes in the nearest edge bin, so it cannot
+  // wrap into another row or index outside the bin buffer. Clamping before the
+  // conversion to i32 keeps a particle very far out from overflowing it.
+  var binx = i32(clamp(floor((pos.x + (f32(params.boxDim) / 2.0)) / f32(binParams.size)), 0.0, f32(binParams.x - 1)));
+  var biny = i32(clamp(floor((pos.y + (f32(params.boxDim) / 2.0)) / f32(binParams.size)), 0.0, f32(binParams.y - 1)));
+
   var binIndex = (biny * binParams.x) + binx;
 
   var exchangeIndex = atomicExchange(&bins[binIndex], i32(voIndex));

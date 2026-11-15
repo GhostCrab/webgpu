@@ -44,6 +44,7 @@ test('params are packed where the shader struct puts them', () => {
     constrainCenter: [8, 9],
     boxDim: 4,
     constrainType: 1,
+    speedLimit: 8,
     clickPoint: [5, 6, 7]
   });
   const offset = Object.fromEntries(
@@ -56,5 +57,6 @@ test('params are packed where the shader struct puts them', () => {
   expect([...floats.subarray(offset.constrainCenter, offset.constrainCenter + 2)]).toEqual([8, 9]);
   expect(floats[offset.boxDim]).toBe(4);
   expect(new Uint32Array(buffer)[offset.constrainType]).toBe(1);
+  expect(floats[offset.speedLimit]).toBe(8);
   expect([...floats.subarray(offset.clickPoint, offset.clickPoint + 3)]).toEqual([5, 6, 7]);
 });

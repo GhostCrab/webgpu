@@ -72,24 +72,27 @@ export function scatter(options: ScatterOptions): Particle[] {
 }
 
 /**
- * The largest radius among seeded particles. Rejects a seed the simulation
- * cannot size its buffers and bins from, naming what is wrong with it.
+ * The smallest and largest radius among the enabled seeded particles. Rejects
+ * a seed the simulation cannot size its buffers and bins from, naming what is
+ * wrong with it.
  */
-function largestRadius(particles: Particle[]): number {
+function radiusRange(particles: Particle[]): { smallest: number; largest: number } {
   if (particles.length === 0) {
     throw new Error('seed returned no particles');
   }
+  let smallest = Infinity;
   let largest = 0;
   for (const p of particles) {
     if (!Number.isFinite(p.radius) || p.radius < 0) {
       throw new Error(`seed returned a particle with radius ${p.radius}; a radius must be 0 or more`);
     }
     if (p.radius > largest) largest = p.radius;
+    if (p.radius > 0 && p.radius < smallest) smallest = p.radius;
   }
   if (largest === 0) {
     throw new Error('seed returned only disabled particles (radius 0), so bins cannot be sized');
   }
-  return largest;
+  return { smallest, largest };
 }
 
 /** Everything outside the simulation that affects one frame of it. */
@@ -142,6 +145,8 @@ export class Verlet {
   private bounds: number;
   private seed: () => Particle[];
   private binSize: number;
+  /** The furthest a particle may move in one substep: the smallest radius in use. */
+  private speedLimit: number;
   private totalTime = 0;
   /** The substep rate of the latest step, which the default seed scales to. */
   private substepRate = DEFAULT_SUBSTEP_RATE;
@@ -164,8 +169,10 @@ export class Verlet {
 
     const particles = this.seed();
     this.particleCount = particles.length;
+    const radii = radiusRange(particles);
     // A bin must be at least as wide as the largest particle.
-    this.binSize = 2 * largestRadius(particles);
+    this.binSize = 2 * radii.largest;
+    this.speedLimit = radii.smallest;
 
     const data = packParticles(particles);
     this.particleBuffer = device.createBuffer({
@@ -194,6 +201,7 @@ export class Verlet {
         constrainCenter: [0, 0],
         boxDim: this.bounds,
         constrainType: 1,
+        speedLimit: this.speedLimit,
         clickPoint: [0, 0, 0]
       })
     );
@@ -249,6 +257,7 @@ export class Verlet {
         constrainCenter: input.constrainCenter ?? [0, 0],
         boxDim: this.bounds,
         constrainType: input.classicConstrain ? 0 : 1,
+        speedLimit: this.speedLimit,
         clickPoint: [input.clickPoint[0], input.clickPoint[1], input.clickForce]
       })
     );
@@ -271,9 +280,11 @@ export class Verlet {
         `seed returned ${particles.length} particles; expected ${this.particleCount}`
       );
     }
-    if (2 * largestRadius(particles) > this.binSize) {
+    const radii = radiusRange(particles);
+    if (2 * radii.largest > this.binSize) {
       throw new Error('seed returned a particle larger than the bins were sized for');
     }
+    this.speedLimit = radii.smallest;
     this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles));
   }
 

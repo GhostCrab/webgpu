@@ -14,12 +14,14 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var radius = verletObjects[voIndex].colorAndRadius.w;
 
   if (params.clickPoint.z != 0) {
-    var _pos = params.clickPoint.xy;
-    var posDiff = _pos - pos;
+    var posDiff = params.clickPoint.xy - pos;
     var mag = length(posDiff);
-    var invMag2 = 1 / (mag * mag);
-    var posDiffNorm = posDiff / mag;
-    accel = posDiffNorm * params.clickPoint.z * radius;
+    // A particle exactly at the click point has no direction to it, so it
+    // receives no click force.
+    accel = vec2<f32>(0.0, 0.0);
+    if (mag > 0) {
+      accel = (posDiff / mag) * params.clickPoint.z * radius;
+    }
   } else {
     accel += vec2<f32>(0.0, 2000.0 * radius);
   }

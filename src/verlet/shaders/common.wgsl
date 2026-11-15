@@ -10,7 +10,8 @@ struct Params {
   constrainType: u32,
   unused1: u32,
   unused2: u32,
-  unused3: u32,
+  // The furthest a particle may move in one substep: the smallest radius.
+  speedLimit: f32,
   constrainCenter: vec4<f32>,
   // xy: the point, z: the force (positive attracts, negative repels, 0 is off)
   clickPoint: vec4<f32>,

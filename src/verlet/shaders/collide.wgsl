@@ -63,7 +63,13 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
           var minDist = radius + otherRadius;
           if (dist2 < minDist * minDist) {
             var dist = sqrt(dist2);
-            var n = v / dist;
+            // Coincident particles have no direction between them, so they
+            // separate along x, the lower index toward +x, whichever of the
+            // pair this invocation is visiting.
+            var n = vec2<f32>(select(-1.0, 1.0, voIndex < otherVOIndex), 0.0);
+            if (dist > 0) {
+              n = v / dist;
+            }
 
             var massRatio1 = radius / (radius + otherRadius);
             var massRatio2 = otherRadius / (radius + otherRadius);
