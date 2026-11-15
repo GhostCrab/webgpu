@@ -6,42 +6,77 @@ import { SimulationTarget } from '../src/simulation-target';
 import {
   createSim,
   DEFAULT_CONSTRAIN_RADIUS,
-  FRAME_TIME,
   RADIUS,
   runStats,
   seededScatter,
-  SUBSTEPS
+  SUBSTEP_RATE
 } from './sim-harness';
 
 // These tests run the real WGSL pipelines on a real GPU. Without one they skip.
 const device = await getDevice();
 
-// Distance fallen from rest after one frame: a * dt^2 * n(n+1)/2 over n substeps,
-// where gravity is 2000 * radius and dt is the substep time.
-const substepTime = FRAME_TIME / SUBSTEPS;
-const ONE_FRAME_DROP =
-  2000 * RADIUS * substepTime * substepTime * ((SUBSTEPS * (SUBSTEPS + 1)) / 2);
+// Distance fallen from rest after n substeps of dt seconds: a * dt^2 * n(n+1)/2,
+// where gravity a is 2000 * radius.
+function drop(substeps: number, substepRate = SUBSTEP_RATE) {
+  const dt = 1 / substepRate;
+  return 2000 * RADIUS * dt * dt * ((substeps * (substeps + 1)) / 2);
+}
+
+// 20 substeps at 1200 per second: one 60 Hz frame.
+const FRAME = 20;
+const ONE_FRAME_DROP = drop(FRAME);
 
 describe.skipIf(!device)('one particle', () => {
   test('falls under gravity along +y', async () => {
     const sim = await createSim([{ x: 0, y: 0 }]);
-    sim.step(1);
+    sim.step(FRAME);
     const [p] = await sim.read();
     expect(ONE_FRAME_DROP).toBeCloseTo(0.4375, 10);
     expect(p.x).toBe(0);
     expect(p.y).toBeCloseTo(ONE_FRAME_DROP, 5);
   });
 
+  test('falls by the hand-computed distance after a given number of substeps', async () => {
+    const sim = await createSim([{ x: 0, y: 0 }]);
+    sim.step(7);
+    const [p] = await sim.read();
+    // 3000 * (1/1200)^2 * 28
+    expect(p.y).toBeCloseTo(0.0583333, 5);
+  });
+
+  test('the substep rate sets the length of a substep', async () => {
+    const sim = await createSim([{ x: 0, y: 0 }]);
+    sim.step(FRAME, { substepRate: 2400 });
+    const [p] = await sim.read();
+    // 3000 * (1/2400)^2 * 210: a quarter of the fall at 1200 per second.
+    expect(p.y).toBeCloseTo(0.109375, 5);
+  });
+
+  test('how the substeps are split between calls does not change the result', async () => {
+    const together = await createSim([{ x: 0, y: 0 }]);
+    together.step(FRAME);
+    const apart = await createSim([{ x: 0, y: 0 }]);
+    for (let i = 0; i < FRAME; i++) apart.step(1);
+    expect(await apart.read()).toEqual(await together.read());
+  });
+
+  test('zero substeps leaves the particles where they are', async () => {
+    const sim = await createSim([{ x: 3, y: 4 }]);
+    sim.step(0);
+    const [p] = await sim.read();
+    expect([p.x, p.y]).toEqual([3, 4]);
+  });
+
   test('falls the same distance with collision off', async () => {
     const sim = await createSim([{ x: 0, y: 0 }]);
-    sim.step(1, { collide: false });
+    sim.step(FRAME, { collide: false });
     const [p] = await sim.read();
     expect(p.y).toBeCloseTo(ONE_FRAME_DROP, 5);
   });
 
   test('a positive click force pulls toward the click point and replaces gravity', async () => {
     const sim = await createSim([{ x: 0, y: 0 }]);
-    sim.step(1, { clickX: 100, clickY: 0, clickForce: 2000 });
+    sim.step(FRAME, { clickX: 100, clickY: 0, clickForce: 2000 });
     const [p] = await sim.read();
     expect(p.x).toBeCloseTo(ONE_FRAME_DROP, 5);
     expect(p.y).toBe(0);
@@ -49,7 +84,7 @@ describe.skipIf(!device)('one particle', () => {
 
   test('a negative click force pushes away from the click point', async () => {
     const sim = await createSim([{ x: 0, y: 0 }]);
-    sim.step(1, { clickX: 100, clickY: 0, clickForce: -2000 });
+    sim.step(FRAME, { clickX: 100, clickY: 0, clickForce: -2000 });
     const [p] = await sim.read();
     expect(p.x).toBeCloseTo(-ONE_FRAME_DROP, 5);
     expect(p.y).toBe(0);
@@ -64,7 +99,7 @@ describe.skipIf(!device)('two overlapping particles', () => {
 
   test('are pushed apart symmetrically when collision is on', async () => {
     const sim = await createSim(pair);
-    sim.step(1);
+    sim.step(FRAME);
     const [a, b] = await sim.read();
     expect(b.x - a.x).toBeGreaterThanOrEqual(2 * RADIUS);
     expect(a.x + b.x).toBeCloseTo(0, 4);
@@ -75,7 +110,7 @@ describe.skipIf(!device)('two overlapping particles', () => {
 
   test('pass through each other when collision is off', async () => {
     const sim = await createSim(pair);
-    sim.step(5, { collide: false });
+    sim.step(5 * FRAME, { collide: false });
     const [a, b] = await sim.read();
     expect(a.x).toBe(-1);
     expect(b.x).toBe(1);
@@ -90,7 +125,7 @@ describe.skipIf(!device)('the boundary circle', () => {
 
   test('classic constrain stops the particle at the edge', async () => {
     const sim = await createSim(falling);
-    sim.step(1, { classicConstrain: true });
+    sim.step(FRAME, { classicConstrain: true });
     const [p] = await sim.read();
     expect(p.y).toBeGreaterThan(edge - 0.01);
     expect(p.y).toBeLessThan(edge + 0.01);
@@ -98,7 +133,7 @@ describe.skipIf(!device)('the boundary circle', () => {
 
   test('reflective constrain bounces the particle back inward', async () => {
     const sim = await createSim(falling);
-    sim.step(1, { classicConstrain: false });
+    sim.step(FRAME, { classicConstrain: false });
     const [p] = await sim.read();
     expect(p.y).toBeLessThan(edge);
     expect(p.y).toBeLessThan(p.prevY);
@@ -106,7 +141,7 @@ describe.skipIf(!device)('the boundary circle', () => {
 
   test.each([true, false])('the particle comes to rest at the edge (classic: %s)', async (classicConstrain) => {
     const sim = await createSim(falling);
-    sim.step(126, { classicConstrain });
+    sim.step(126 * FRAME, { classicConstrain });
     const [p] = await sim.read();
     expect(p.y).toBeGreaterThan(edge - 0.01);
     expect(p.y).toBeLessThan(edge + 0.01);
@@ -116,9 +151,8 @@ describe.skipIf(!device)('the boundary circle', () => {
   test.each([true, false])(
     'a particle crossing the boundary circle ends the substep on it, not past it (classic: %s)',
     async (classicConstrain) => {
-      // Moving +x at 0.5 per substep, it crosses the edge by 0.25 on the
-      // frame's last substep, so the frame ends straight after the crossing.
-      const sim = await createSim([{ x: edge - 9.75, y: 0, prevX: edge - 10.25, prevY: 0 }]);
+      // Moving +x at 0.5 per substep, it would end this substep 0.25 past the edge.
+      const sim = await createSim([{ x: edge - 0.25, y: 0, prevX: edge - 0.75, prevY: 0 }]);
       sim.step(1, { classicConstrain });
       const [p] = await sim.read();
       expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
@@ -126,32 +160,31 @@ describe.skipIf(!device)('the boundary circle', () => {
   );
 
   test('reflective constrain: a head-on impact returns the particle inward at 0.8 of its speed', async () => {
-    // Moving +x at 0.5 per substep, it crosses the edge by 0.25 on the tenth
-    // substep, then travels inward for the remaining ten.
-    const sim = await createSim([{ x: edge - 4.75, y: 0, prevX: edge - 5.25, prevY: 0 }]);
+    const sim = await createSim([{ x: edge - 0.25, y: 0, prevX: edge - 0.75, prevY: 0 }]);
     sim.step(1);
     const [p] = await sim.read();
+    expect(p.x).toBeCloseTo(edge, 3);
     expect(p.x - p.prevX).toBeCloseTo(-0.4, 3);
-    expect(p.x).toBeCloseTo(edge - 4, 2);
   });
 
   test('reflective constrain: a glancing impact keeps its speed along the boundary', async () => {
     // At the bottom of the circle, moving +x at 0.5 and outward (+y) at 0.2 per
-    // substep. Gravity acts along the normal here, so it leaves the speed along
-    // the boundary alone; the boundary turns by under a degree over the frame.
+    // substep. Gravity adds 3000 / 1200^2 = 0.0021 to the outward speed, so
+    // 0.8 of 0.2021 comes back inward; the speed along the boundary is kept.
     const sim = await createSim([{ x: 0, y: edge - 0.1, prevX: -0.5, prevY: edge - 0.3 }]);
     sim.step(1);
     const [p] = await sim.read();
-    expect(p.x - p.prevX).toBeCloseTo(0.5, 2);
     expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+    expect(p.x - p.prevX).toBeCloseTo(0.5, 3);
+    expect(p.y - p.prevY).toBeCloseTo(-0.1617, 3);
   });
 
   test('reflective constrain: a particle outside the circle and moving inward is not reflected', async () => {
     const sim = await createSim([{ x: edge + 5, y: 0, prevX: edge + 5.5, prevY: 0 }]);
     sim.step(1);
     const [p] = await sim.read();
-    expect(p.x - p.prevX).toBeCloseTo(-0.5, 3);
     expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+    expect(p.x - p.prevX).toBeCloseTo(-0.5, 3);
   });
 
   test.each([true, false])(
@@ -159,7 +192,7 @@ describe.skipIf(!device)('the boundary circle', () => {
     async (classicConstrain) => {
       // GitHub issue #2: at rest 400 past the edge, it was flung to the far side.
       const sim = await createSim([{ x: 0, y: 900 }]);
-      sim.step(1, { constrainRadius: 500, classicConstrain });
+      sim.step(FRAME, { constrainRadius: 500, classicConstrain });
       const [p] = await sim.read();
       expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
       expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
@@ -172,7 +205,7 @@ describe.skipIf(!device)('the boundary circle', () => {
     async (classicConstrain) => {
       // Falling at 0.5 per substep onto the bottom of a circle centred at (400, 0).
       const sim = await createSim([{ x: 400, y: 490, prevX: 400, prevY: 489.5 }]);
-      sim.step(1, { constrainCenter: [400, 0], constrainRadius: 500, classicConstrain });
+      sim.step(FRAME, { constrainCenter: [400, 0], constrainRadius: 500, classicConstrain });
       const [p] = await sim.read();
       expect(Math.hypot(p.x - 400, p.y)).toBeLessThanOrEqual(500 - RADIUS + 0.001);
       expect(p.y).toBeGreaterThan(490);
@@ -184,7 +217,7 @@ describe.skipIf(!device)('the boundary circle', () => {
 
   test('a smaller constrain radius moves the edge', async () => {
     const sim = await createSim([{ x: 0, y: 490 }]);
-    sim.step(126, { constrainRadius: 500, classicConstrain: true });
+    sim.step(126 * FRAME, { constrainRadius: 500, classicConstrain: true });
     const [p] = await sim.read();
     expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
     expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
@@ -219,7 +252,7 @@ describe.skipIf(!device)('binning', () => {
 describe.skipIf(!device)('15,000 seeded particles', () => {
   test('after one frame the aggregate state matches the recorded baseline', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(1);
+    sim.step(FRAME);
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
@@ -237,7 +270,7 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
   // to rest. With a speed limit of the radius per substep it does.
   test('settles into a pile at the bottom of the circle', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(300, { classicConstrain: true });
+    sim.step(300 * FRAME, { classicConstrain: true });
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);
@@ -262,7 +295,7 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
 
   test('without collision the particles collapse onto the boundary', async () => {
     const sim = await createSim(seededScatter(15000, 1234));
-    sim.step(300, { collide: false });
+    sim.step(300 * FRAME, { collide: false });
     const stats = runStats(await sim.read());
 
     expect(stats.nonFinite).toBe(0);

@@ -9,16 +9,18 @@ import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
 import { scatter, Verlet } from '../src/verlet/verlet';
 
 /**
- * The test surface for the simulation. Tests place particles, step whole
- * frames and read particles back; everything about how the simulation is
+ * The test surface for the simulation. Tests place particles, advance them
+ * by a number of substeps and read particles back; everything about how the simulation is
  * constructed and driven stays in this file.
  */
 
 export const BOUNDS = 2160;
 export const RADIUS = 1.5;
 export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
-export const SUBSTEPS = 20;
-export const FRAME_TIME = 1 / 60;
+/** The app's starting substep rate: 20 substeps per 60 Hz frame. */
+export const SUBSTEP_RATE = 1200;
+// Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
+const SUBSTEPS_PER_SUBMIT = 20;
 
 export interface TestParticle {
   x: number;
@@ -42,12 +44,15 @@ export interface SimInput {
   constrainCenter?: [number, number];
   classicConstrain?: boolean;
   collide?: boolean;
+  /** Substeps per second of simulated time. Defaults to SUBSTEP_RATE. */
+  substepRate?: number;
 }
 
 export interface Sim {
   device: GPUDevice;
   count: number;
-  step(frames: number, input?: SimInput): void;
+  /** Advances the simulation by a whole number of substeps. */
+  step(substeps: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
   reset(): void;
   /** Runs only the binning stage and returns the spatial hash it built. */
@@ -77,7 +82,7 @@ export function seededScatter(count: number, seed: number): TestParticle[] {
     count,
     bounds: BOUNDS,
     radius: RADIUS,
-    substeps: SUBSTEPS,
+    substepRate: SUBSTEP_RATE,
     random: mulberry32(seed)
   });
 }
@@ -137,7 +142,6 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
         bounds: BOUNDS,
         projection: target.projection,
         target: target.drawTarget,
-        substeps: SUBSTEPS,
         seed: () =>
           particles.map((p) => ({
             x: p.x,
@@ -169,17 +173,18 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
     device,
     count: particles.length,
 
-    step(frames, input = {}) {
-      for (let f = 0; f < frames; f++) {
+    step(substeps, input = {}) {
+      for (let done = 0; done < substeps; done += SUBSTEPS_PER_SUBMIT) {
         checked(() => {
           const encoder = device.createCommandEncoder();
-          verlet.step(encoder, FRAME_TIME, {
+          verlet.step(encoder, Math.min(SUBSTEPS_PER_SUBMIT, substeps - done), {
             clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
             clickForce: input.clickForce ?? 0,
             constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
             constrainCenter: input.constrainCenter,
             classicConstrain: input.classicConstrain ?? false,
-            collide: input.collide ?? true
+            collide: input.collide ?? true,
+            substepRate: input.substepRate ?? SUBSTEP_RATE
           });
           device.queue.submit([encoder.finish()]);
         });
