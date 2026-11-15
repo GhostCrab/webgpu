@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import { getDevice } from './gpu';
-import { BOUNDS, createSim, mulberry32, RADIUS } from './sim-harness';
+import { BOUNDS, createSim, mulberry32, RADIUS, seededScatter } from './sim-harness';
 
 const { binGrid } = await import('../src/verlet/verlet-bin-computer');
 const { scatter } = await import('../src/verlet/verlet');
@@ -43,6 +43,22 @@ describe('scatter', () => {
       expect(Math.abs(p.y)).toBeLessThanOrEqual(BOUNDS / 2);
       expect(p.radius).toBe(RADIUS);
     }
+  });
+});
+
+describe.skipIf(!device)('seeding', () => {
+  test('rejects a seed with no particles', async () => {
+    await expect(createSim([])).rejects.toThrow('seed returned no particles');
+  });
+
+  test('rejects a seed of only disabled particles, which gives bins no size', async () => {
+    await expect(createSim([{ x: 0, y: 0, radius: 0 }])).rejects.toThrow('only disabled particles');
+  });
+
+  test('accepts far more particles than the default', async () => {
+    const sim = await createSim(seededScatter(200000, 5));
+    sim.step(1);
+    expect(await sim.read()).toHaveLength(200000);
   });
 });
 

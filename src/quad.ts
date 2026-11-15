@@ -60,4 +60,9 @@ export class Quad {
     passEncoder.setIndexBuffer(this.indexBuffer, 'uint16');
     passEncoder.drawIndexed(6, count);
   }
+
+  destroy() {
+    this.verticesBuffer.destroy();
+    this.indexBuffer.destroy();
+  }
 }

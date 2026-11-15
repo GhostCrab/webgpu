@@ -1,5 +1,5 @@
 import { Quad } from '../quad';
-import { DrawTarget } from '../simulation-target';
+import type { DrawTarget } from '../simulation-target';
 import { particleInstanceLayout } from './particle-layout';
 import shaderCode from './shaders/verlet-renderer.wgsl';
 
@@ -14,6 +14,7 @@ export interface VerletRendererOptions {
 export class VerletRenderer {
   private pipeline: GPURenderPipeline;
   private bindGroup: GPUBindGroup;
+  private projectionBuffer: GPUBuffer;
   private quad: Quad;
 
   constructor(device: GPUDevice, options: VerletRendererOptions) {
@@ -23,10 +24,10 @@ export class VerletRenderer {
       entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }]
     });
 
-    const projectionBuffer = device.createBuffer({
+    const projectionBuffer = (this.projectionBuffer = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
+    }));
     device.queue.writeBuffer(projectionBuffer, 0, new Float32Array(options.projection));
 
     this.bindGroup = device.createBindGroup({
@@ -82,5 +83,10 @@ export class VerletRenderer {
     passEncoder.setBindGroup(0, this.bindGroup);
     passEncoder.setVertexBuffer(1, particleBuffer);
     this.quad.render(passEncoder, count);
+  }
+
+  destroy() {
+    this.projectionBuffer.destroy();
+    this.quad.destroy();
   }
 }

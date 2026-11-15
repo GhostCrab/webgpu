@@ -40,7 +40,7 @@ export function binGrid(bounds: number, binSize: number): BinGrid {
   const size = Math.ceil(binSize);
   const width = Math.ceil(bounds / size / 2) * 2;
   const height = width;
-  return { binSize: size, width, height, binCount: Math.ceil((width * height) / 4) * 4 };
+  return { binSize: size, width, height, binCount: width * height };
 }
 
 export interface BinComputerOptions {
@@ -66,6 +66,7 @@ export class VerletBinComputer {
   private particleCount: number;
   private pipelines: Record<Stage, GPUComputePipeline>;
   private bindGroups: GPUBindGroup[];
+  private ownedBuffers: GPUBuffer[];
 
   constructor(device: GPUDevice, options: BinComputerOptions) {
     this.particleCount = options.particleCount;
@@ -121,6 +122,8 @@ export class VerletBinComputer {
       size: binCount * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
+
+    this.ownedBuffers = [binParamsBuffer, csoBuffer, this.binBuffer];
 
     this.bindGroups = [
       device.createBindGroup({
@@ -192,13 +195,19 @@ export class VerletBinComputer {
   }
 
   private dispatchBinning(pass: GPUComputePassEncoder) {
+    const perParticle = Math.ceil(this.particleCount / 64);
+
     pass.setPipeline(this.pipelines.binClear);
     pass.dispatchWorkgroups(Math.ceil(this.grid.binCount / 64));
 
     pass.setPipeline(this.pipelines.binLinkClear);
-    pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
+    pass.dispatchWorkgroups(perParticle);
 
     pass.setPipeline(this.pipelines.binSet);
-    pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
+    pass.dispatchWorkgroups(perParticle);
+  }
+
+  destroy() {
+    this.ownedBuffers.forEach((buffer) => buffer.destroy());
   }
 }

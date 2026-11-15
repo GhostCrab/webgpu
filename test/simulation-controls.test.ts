@@ -144,6 +144,12 @@ describe('mapping the pointer into simulation space', () => {
     expect(map(1800, 900)).toEqual([1920, 1080]);
   });
 
+  test('a collapsed canvas maps every point to the origin', () => {
+    const collapsed = fitViewport(3840, 2160, 800, 0);
+    expect(canvasToSimulation(collapsed, 3840, 2160, 400, 0)).toEqual([0, 0]);
+    expect(canvasToSimulation(fitViewport(3840, 2160, 0, 0), 3840, 2160, 0, 0)).toEqual([0, 0]);
+  });
+
   test('points in the bars clamp to the edge', () => {
     expect(map(0, 450)).toEqual([-1920, 0]);
     expect(map(2000, 450)).toEqual([1920, 0]);

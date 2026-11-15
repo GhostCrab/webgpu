@@ -25,6 +25,7 @@ export interface SimulationTargetOptions {
 class MultisampledPass implements GPURenderPassDescriptor {
   colorAttachments: GPURenderPassColorAttachment[];
   depthStencilAttachment: GPURenderPassDepthStencilAttachment;
+  private textures: GPUTexture[];
 
   constructor(device: GPUDevice, width: number, height: number, format: GPUTextureFormat) {
     const colorTexture = device.createTexture({
@@ -40,6 +41,8 @@ class MultisampledPass implements GPURenderPassDescriptor {
       format: DEPTH_STENCIL_FORMAT,
       usage: GPUTextureUsage.RENDER_ATTACHMENT
     });
+
+    this.textures = [colorTexture, depthTexture];
 
     this.colorAttachments = [
       {
@@ -63,6 +66,10 @@ class MultisampledPass implements GPURenderPassDescriptor {
   resolveTo(view: GPUTextureView): this {
     this.colorAttachments[0].resolveTarget = view;
     return this;
+  }
+
+  destroy() {
+    this.textures.forEach((texture) => texture.destroy());
   }
 }
 
@@ -153,7 +160,15 @@ export class SimulationTarget {
   /** Call with the canvas size in pixels, at the start and whenever it changes. */
   resize(canvasWidth: number, canvasHeight: number) {
     this.viewport = fitViewport(this.width, this.height, canvasWidth, canvasHeight);
-    this.canvasPass = new MultisampledPass(this.device, canvasWidth, canvasHeight, this.format);
+
+    // A hidden or collapsed canvas reports a size of 0, which a texture cannot have.
+    this.canvasPass?.destroy();
+    this.canvasPass = new MultisampledPass(
+      this.device,
+      Math.max(1, canvasWidth),
+      Math.max(1, canvasHeight),
+      this.format
+    );
   }
 
   /** Maps a point in canvas pixels to simulation space. */
@@ -186,5 +201,12 @@ export class SimulationTarget {
     present.setBindGroup(0, this.presentBindGroup);
     present.draw(6);
     present.end();
+  }
+
+  /** Releases the GPU resources. The target cannot be used afterwards. */
+  destroy() {
+    this.image.destroy();
+    this.imagePass.destroy();
+    this.canvasPass?.destroy();
   }
 }

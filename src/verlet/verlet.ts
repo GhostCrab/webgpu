@@ -5,7 +5,8 @@ import {
   Particle,
   unpackParticles
 } from './particle-layout';
-import { DrawTarget } from '../simulation-target';
+import { readBuffer } from '../read-buffer';
+import type { DrawTarget } from '../simulation-target';
 import { VerletBinComputer } from './verlet-bin-computer';
 import { VerletRenderer } from './verlet-renderer';
 
@@ -128,9 +129,19 @@ export class Verlet {
       (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5, substeps: this.substeps }));
 
     const particles = this.seed();
+    let maxRadius = 0;
+    for (const p of particles) {
+      if (p.radius > maxRadius) maxRadius = p.radius;
+    }
+    if (particles.length === 0) {
+      throw new Error('seed returned no particles');
+    }
+    if (maxRadius === 0) {
+      throw new Error('seed returned only disabled particles (radius 0), so bins cannot be sized');
+    }
     this.particleCount = particles.length;
     // A bin must be at least as wide as the largest particle.
-    this.binSize = 2 * Math.max(...particles.map((p) => p.radius));
+    this.binSize = 2 * maxRadius;
 
     const data = packParticles(particles);
     this.particleBuffer = device.createBuffer({
@@ -228,19 +239,15 @@ export class Verlet {
   }
 
   /** The raw contents of the particle buffer. */
-  async readParticleBuffer(): Promise<ArrayBuffer> {
-    const size = this.particleBuffer.size;
-    const staging = this.device.createBuffer({
-      size,
-      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-    });
-    const encoder = this.device.createCommandEncoder();
-    encoder.copyBufferToBuffer(this.particleBuffer, 0, staging, 0, size);
-    this.device.queue.submit([encoder.finish()]);
-    await staging.mapAsync(GPUMapMode.READ);
-    const contents = staging.getMappedRange().slice(0);
-    staging.unmap();
-    staging.destroy();
-    return contents;
+  readParticleBuffer(): Promise<ArrayBuffer> {
+    return readBuffer(this.device, this.particleBuffer);
+  }
+
+  /** Releases the GPU resources. The simulation cannot be used afterwards. */
+  destroy() {
+    this.particleBuffer.destroy();
+    this.paramsBuffer.destroy();
+    this.computer.destroy();
+    this.renderer.destroy();
   }
 }

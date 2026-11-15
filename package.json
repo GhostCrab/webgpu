@@ -3,6 +3,9 @@
     "version": "0.1.0",
     "description": "🔺 A simple hello triangle example introducing WebGPU.",
     "main": "dist/main.js",
+    "engines": {
+        "node": ">=21"
+    },
     "scripts": {
         "start": "npm i && npm run build && npm run dev",
         "serve": "http-server",
@@ -42,12 +45,12 @@
         "typescript": "^5.9.3",
         "vitest": "^5.1.0",
         "webgpu": "^0.6.2",
-        "webgpu-utils": "^2.1.1",
         "webpack": "^5.75.x"
     },
     "dependencies": {
         "game-inputs": "^0.8.0",
         "gl-matrix": "^3.4.3",
+        "webgpu-utils": "^2.1.1",
         "wgpu-matrix": "^2.5.1"
     }
 }

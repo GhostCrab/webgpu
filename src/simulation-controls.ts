@@ -1,4 +1,4 @@
-import { SimulationInput } from './verlet/verlet';
+import type { SimulationInput } from './verlet/verlet';
 
 /** Which way a held mouse button drives the click force. */
 export type ClickButton = 'attract' | 'repel';

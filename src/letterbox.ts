@@ -30,7 +30,8 @@ export function fitViewport(
 
 /**
  * Maps a point in canvas pixels to simulation space, whose origin is the
- * centre of the viewport. Points in the bars clamp to the viewport's edge.
+ * centre of the viewport. Points in the bars clamp to the viewport's edge,
+ * and an empty viewport maps everything to the origin.
  */
 export function canvasToSimulation(
   viewport: Viewport,
@@ -39,6 +40,10 @@ export function canvasToSimulation(
   canvasX: number,
   canvasY: number
 ): [number, number] {
+  if (!(viewport.width > 0 && viewport.height > 0)) {
+    return [0, 0];
+  }
+
   const x = Math.max(0, Math.min(viewport.width, canvasX - viewport.x));
   const y = Math.max(0, Math.min(viewport.height, canvasY - viewport.y));
 
