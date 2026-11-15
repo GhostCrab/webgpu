@@ -18,6 +18,7 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 `test/sim-harness.ts` is the test surface for the simulation: place particles, advance them by a number of substeps (`sim.step(20)` is one 60 Hz frame at the default rate of 1200 per second; `substepRate` is an input), read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
 
+- `readBinGrid()` (new pipeline only) runs one bin grid build on its own and returns the particles in the order they sit in memory, with each bin's start; `test/bin-grid.test.ts` checks builds through it. The GPU computes bins in 32-bit floats, so a particle within a hair of a bin edge may sit in either bin; those checks allow for it.
 - `createSim(particles, { pipeline })` picks the pipeline, `'current'` by default. Behaviour both pipelines share is tested against each in `PIPELINES` with `describe.each`.
 - Particles are placed and read with a velocity in simulation units per second, and read back ordered by particle id.
 
@@ -46,7 +47,7 @@ npm run bench
 BENCH_NO_TIMESTAMPS=1 npm run bench           # as on a device without timestamp queries
 ```
 
-`bench/stage-timings.bench.ts` measures where the time in a substep goes, at 15,000, 500,000 and 1,000,000 particles. It is a measuring tool, not a test: it asserts nothing and `npm test` does not run it. Vitest runs it only because Vitest already loads WGSL and the WebGPU globals; it has its own config, `vitest.bench.config.mts`.
+`bench/stage-timings.bench.ts` measures where the time in a substep goes, at 15,000, 500,000 and 1,000,000 particles, for the current pipeline and then the new one, with a table for each. It is a measuring tool, not a test: it asserts nothing and `npm test` does not run it. Vitest runs it only because Vitest already loads WGSL and the WebGPU globals; it has its own config, `vitest.bench.config.mts`.
 
 - It builds each scene through the simulation interface, lets it settle for three seconds of simulated time, then advances it in frame-sized command buffers, outside any display loop, and prints a table of milliseconds per substep.
 - With timestamp queries, `Verlet.step` is given a stage timer and runs each stage of a substep in its own compute pass with timestamp writes; the table shows each stage's GPU time and their sum. The simulation never asks for the feature itself.
@@ -55,4 +56,4 @@ BENCH_NO_TIMESTAMPS=1 npm run bench           # as on a device without timestamp
 
 ## Pure modules
 
-`clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `binGrid`, `scatter` and the particle layout are tested without a GPU.
+`clock.ts`, `simulation-controls.ts`, `letterbox.ts`, `binGrid`, `sizeBinGrid`, `scatter` and the particle layout are tested without a GPU.

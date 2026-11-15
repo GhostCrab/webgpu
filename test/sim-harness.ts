@@ -6,7 +6,9 @@ import { afterEach } from 'vitest';
 import { readBuffer } from '../src/read-buffer';
 import { SimulationTarget } from '../src/simulation-target';
 import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
-import { PipelineName, scatter, Verlet } from '../src/verlet/verlet';
+import { BinGridContents, PipelineName, scatter, Verlet } from '../src/verlet/verlet';
+
+export type { BinGridContents };
 
 /**
  * The test surface for the simulation. Tests place particles, advance them
@@ -58,6 +60,11 @@ export interface Sim {
   /** Runs only the binning stage and returns the spatial hash it built. */
   readBinLists(): Promise<{ heads: Int32Array; links: Int32Array }>;
   /**
+   * New pipeline only: runs only a bin grid build and returns what it left
+   * behind, the particles in the order they sit in memory.
+   */
+  readBinGrid(): Promise<BinGridContents>;
+  /**
    * Draws the particles and presents them to a width x height canvas, as the
    * app does each frame. Returns a lookup for the [r, g, b] bytes of a pixel.
    */
@@ -102,6 +109,8 @@ export const PIPELINES: PipelineName[] = ['current', 'new'];
 export interface SimOptions {
   /** Defaults to the app's default pipeline. */
   pipeline?: PipelineName;
+  /** The new pipeline's smallest bin size. Defaults to the largest particle's diameter. */
+  minBinSize?: number;
 }
 
 export async function createSim(
@@ -153,6 +162,7 @@ export async function createSim(
         projection: target.projection,
         target: target.drawTarget,
         pipeline: options.pipeline,
+        minBinSize: options.minBinSize,
         seed: () =>
           particles.map((p) => ({
             x: p.x,
@@ -222,6 +232,15 @@ export async function createSim(
       );
       const links = unpackBinLinks(await checkedRead(() => verlet.readParticleBuffer()));
       return { heads, links };
+    },
+
+    readBinGrid() {
+      checked(() => {
+        const encoder = device.createCommandEncoder();
+        verlet.encodeBinGridBuild(encoder);
+        device.queue.submit([encoder.finish()]);
+      });
+      return checkedRead(() => verlet.readBinGrid());
     },
 
     async render(width, height) {

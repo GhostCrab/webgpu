@@ -478,6 +478,25 @@ describe.skipIf(!device)('particle rendering', () => {
     expect(pixel(48, 112)).toEqual([0, 0, 0]);
   });
 
+  test('particles keep their colours while the new pipeline reorders them every substep', async () => {
+    // Bin order runs left to right; particle id order does not.
+    const sim = await createSim(
+      [
+        { x: 900, y: 0, radius: 150, rgb: [1, 0, 0] },
+        { x: -900, y: 0, radius: 150, rgb: [0, 1, 0] },
+        { x: 0, y: 0, radius: 150, rgb: [0, 0, 1] }
+      ],
+      { pipeline: 'new' }
+    );
+    // An odd number of substeps, so the particles end in the other buffer.
+    sim.step(3);
+    const pixel = await sim.render(256, 144);
+
+    expect(pixel(128 + 60, 72)).toEqual([255, 0, 0]);
+    expect(pixel(128 - 60, 72)).toEqual([0, 255, 0]);
+    expect(pixel(128, 72)).toEqual([0, 0, 255]);
+  });
+
   test('a wider canvas shows the simulation centred, with black bars at the sides', async () => {
     const sim = await createSim([
       { x: 0, y: 0, radius: 150, rgb: [0, 1, 0] },

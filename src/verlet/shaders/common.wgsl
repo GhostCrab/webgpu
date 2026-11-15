@@ -67,8 +67,38 @@ struct CollisionStepOffset {
   yOffset: i32,
 }
 
+// The new pipeline's bin grid (spec #9): width x height square bins, binSize
+// wide, covering the square of side params.boxDim centred on the origin.
+struct BinGridParams {
+  binSize: f32,
+  width: u32,
+  height: u32,
+  binCount: u32,
+}
+
 @group(0) @binding(1) var<uniform> params: Params;
+// The current pipeline's bin grid.
 @group(1) @binding(0) var<uniform> binParams: BinParams;
+// The new pipeline's bin grid.
+@group(1) @binding(1) var<uniform> binGrid: BinGridParams;
+
+// The new pipeline's bin a position falls in, as x and y. A position outside
+// the grid, or not finite, is placed in an edge bin, so it can never index
+// outside the bin buffers.
+fn binCoords(pos: vec2<f32>) -> vec2<u32> {
+  let cell = floor((pos + vec2<f32>(params.boxDim / 2.0)) / binGrid.binSize);
+  // Clamped after the conversion as well, because converting NaN gives any value.
+  return vec2<u32>(
+    min(u32(max(cell.x, 0.0)), binGrid.width - 1u),
+    min(u32(max(cell.y, 0.0)), binGrid.height - 1u)
+  );
+}
+
+// The index of the new pipeline's bin a position falls in.
+fn binIndex(pos: vec2<f32>) -> u32 {
+  let c = binCoords(pos);
+  return c.y * binGrid.width + c.x;
+}
 
 // Fraction of the normal speed a particle keeps when it bounces off the
 // boundary circle under the reflective constrain.

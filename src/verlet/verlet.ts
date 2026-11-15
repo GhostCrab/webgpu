@@ -1,12 +1,13 @@
 import { DEFAULT_SUBSTEP_RATE } from '../clock';
 import type { DrawTarget } from '../simulation-target';
-import { CompactPipeline } from './compact-pipeline';
+import { BinGridContents, CompactPipeline } from './compact-pipeline';
 import { CurrentPipeline } from './current-pipeline';
 import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
 import type { Pipeline } from './pipeline';
 import type { StageTimer, VerletBinComputer } from './verlet-bin-computer';
 
 export type { StageTimer } from './verlet-bin-computer';
+export type { BinGridContents } from './compact-pipeline';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
@@ -132,6 +133,13 @@ export interface VerletOptions {
   /** Which pipeline advances and draws the particles. Defaults to the current one. */
   pipeline?: PipelineName;
   /**
+   * The new pipeline's smallest bin size. Its bin buffers are allocated once,
+   * for bins this size; bins are one diameter of the largest particle in use
+   * wide, but never smaller. Defaults to the diameter of the largest particle
+   * of the first seeding. The current pipeline ignores it.
+   */
+  minBinSize?: number;
+  /**
    * Produces the starting particles, and is called again by reset(). It must
    * return the same number of particles each time. Defaults to a random
    * scatter of 15,000 particles of radius 1.5. Each particle's id is its
@@ -206,6 +214,7 @@ export class Verlet {
         substepRate: this.substepRate,
         bounds: this.bounds,
         binSize: this.binSize,
+        minBinSize: options.minBinSize ?? this.binSize,
         paramsBuffer: this.paramsBuffer,
         projection: options.projection,
         target: options.target
@@ -279,16 +288,29 @@ export class Verlet {
       );
     }
     const radii = radiusRange(particles);
-    if (2 * radii.largest > this.binSize) {
-      throw new Error('seed returned a particle larger than the bins were sized for');
-    }
-    this.speedLimit = radii.smallest;
     this.pipeline.write(withIds(particles), this.substepRate);
+    this.speedLimit = radii.smallest;
   }
 
   /** Reads the current particles back from the GPU, ordered by particle id. */
   readParticles(): Promise<Particle[]> {
     return this.pipeline.read(this.substepRate);
+  }
+
+  /**
+   * Encodes only the new pipeline's bin grid build. Exposed for tests of the
+   * build on its own.
+   */
+  encodeBinGridBuild(encoder: GPUCommandEncoder) {
+    this.compactPipeline().encodeBinGridBuild(encoder);
+  }
+
+  /**
+   * What the new pipeline's latest bin grid build left behind. Exposed for
+   * tests of the build on its own.
+   */
+  readBinGrid(): Promise<BinGridContents> {
+    return this.compactPipeline().readBinGrid();
   }
 
   /** The raw contents of the current pipeline's particle buffer. */
@@ -300,6 +322,13 @@ export class Verlet {
   destroy() {
     this.paramsBuffer.destroy();
     this.pipeline.destroy();
+  }
+
+  private compactPipeline(): CompactPipeline {
+    if (!(this.pipeline instanceof CompactPipeline)) {
+      throw new Error('only the new pipeline has this bin grid');
+    }
+    return this.pipeline;
   }
 
   private currentPipeline(): CurrentPipeline {

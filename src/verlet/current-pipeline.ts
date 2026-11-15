@@ -15,12 +15,14 @@ export class CurrentPipeline implements Pipeline {
 
   private device: GPUDevice;
   private particleCount: number;
+  private binSize: number;
   private particleBuffer: GPUBuffer;
   private renderer: VerletRenderer;
 
   constructor(device: GPUDevice, options: PipelineOptions) {
     this.device = device;
     this.particleCount = options.particles.length;
+    this.binSize = options.binSize;
 
     const data = packParticles(options.particles, options.substepRate);
     this.particleBuffer = device.createBuffer({
@@ -57,6 +59,10 @@ export class CurrentPipeline implements Pipeline {
   }
 
   write(particles: Particle[], substepRate: number) {
+    // The bins keep the size they were built with.
+    if (particles.some((p) => 2 * p.radius > this.binSize)) {
+      throw new Error('seed returned a particle larger than the bins were sized for');
+    }
     this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles, substepRate));
   }
 

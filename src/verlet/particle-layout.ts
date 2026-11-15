@@ -217,6 +217,17 @@ export function unpackCompactParticles(
   particleContents: ArrayBuffer,
   colorContents: ArrayBuffer
 ): Particle[] {
+  return unpackCompactParticlesInPlace(particleContents, colorContents).sort((a, b) => a.id - b.id);
+}
+
+/**
+ * Reads particles back out of the contents of the new pipeline's particle and
+ * colour buffers, in the order they sit in the particle buffer.
+ */
+export function unpackCompactParticlesInPlace(
+  particleContents: ArrayBuffer,
+  colorContents: ArrayBuffer
+): Particle[] {
   const data = new Float32Array(particleContents);
   const ids = new Uint32Array(particleContents);
   const colors = new Uint32Array(colorContents);
@@ -234,7 +245,22 @@ export function unpackCompactParticles(
       rgb: [(color & 0xff) / 255, ((color >>> 8) & 0xff) / 255, ((color >>> 16) & 0xff) / 255]
     });
   }
-  return particles.sort((a, b) => a.id - b.id);
+  return particles;
+}
+
+/** Bytes of the new pipeline's bin grid uniform (BinGridParams in common.wgsl). */
+export const BIN_GRID_PARAMS_BYTES = structs.BinGridParams.size;
+
+/** Lays out the contents of the new pipeline's bin grid uniform. */
+export function packBinGridParams(values: {
+  binSize: number;
+  width: number;
+  height: number;
+  binCount: number;
+}): ArrayBuffer {
+  const view = makeStructuredView(structs.BinGridParams);
+  view.set(values);
+  return view.arrayBuffer;
 }
 
 /**

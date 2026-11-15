@@ -5,7 +5,7 @@ import { createRequire } from 'module';
 import { it } from 'vitest';
 
 import { DEFAULT_SUBSTEP_RATE } from '../src/clock';
-import { scatter, SimulationInput, Verlet } from '../src/verlet/verlet';
+import { PipelineName, scatter, SimulationInput, Verlet } from '../src/verlet/verlet';
 import { mulberry32 } from '../test/sim-harness';
 import { GpuStageTimer } from './gpu-stage-timer';
 import { BenchResult, formatTable, StageTime } from './stage-timings';
@@ -17,6 +17,8 @@ import { BenchResult, formatTable, StageTime } from './stage-timings';
  */
 
 const PARTICLE_COUNTS = [15_000, 500_000, 1_000_000];
+// The current pipeline first, as the baseline, then the new one being built.
+const PIPELINES: PipelineName[] = ['current', 'new'];
 // The app's simulation space and boundary circle.
 const BOUNDS = 2160;
 const CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
@@ -28,8 +30,10 @@ const MAX_RADIUS = 1.5;
 // first; while it is still collapsing, the cost of a substep keeps changing.
 const WARM_UP_SUBSTEPS = 3 * DEFAULT_SUBSTEP_RATE;
 const MEASURED_SUBSTEPS = 600;
-// Timestamp queries are limited to 4096 per query set: 5 stages, 2 each.
+// Timestamp queries are limited to 4096 per query set, 2 per stage.
 const TIMED_SUBSTEPS = 200;
+// The most stages either pipeline splits a substep into.
+const MAX_STAGES = 5;
 // Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
 const SUBSTEPS_PER_SUBMIT = 20;
 
@@ -56,9 +60,15 @@ async function run(device: GPUDevice, verlet: Verlet, substeps: number, timer?: 
   await device.queue.onSubmittedWorkDone();
 }
 
-async function measure(device: GPUDevice, count: number, timestamps: boolean): Promise<BenchResult> {
+async function measure(
+  device: GPUDevice,
+  pipeline: PipelineName,
+  count: number,
+  timestamps: boolean
+): Promise<BenchResult> {
   const verlet = new Verlet(device, {
     bounds: BOUNDS,
+    pipeline,
     // Nothing is drawn, but the simulation is built with a draw target.
     projection: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
     target: { format: 'bgra8unorm', sampleCount: 1, depthStencilFormat: 'depth24plus' },
@@ -79,7 +89,7 @@ async function measure(device: GPUDevice, count: number, timestamps: boolean): P
 
     let stages: StageTime[] | null = null;
     if (timestamps) {
-      const timer = new GpuStageTimer(device, TIMED_SUBSTEPS * 5);
+      const timer = new GpuStageTimer(device, TIMED_SUBSTEPS * MAX_STAGES);
       try {
         await run(device, verlet, TIMED_SUBSTEPS, timer);
         stages = await timer.read();
@@ -120,14 +130,19 @@ it('benchmark', { timeout: 30 * 60_000 }, async () => {
     );
   }
 
-  const results: BenchResult[] = [];
+  const results = new Map<PipelineName, BenchResult[]>();
   try {
     // A validation error would make the numbers meaningless.
     device.pushErrorScope('validation');
-    for (const count of PARTICLE_COUNTS) {
-      const radius = radiusFor(count).toFixed(2);
-      console.log(`Measuring ${count.toLocaleString('en-US')} particles, radius ${radius}...`);
-      results.push(await measure(device, count, timestamps));
+    for (const pipeline of PIPELINES) {
+      const measured: BenchResult[] = [];
+      results.set(pipeline, measured);
+      for (const count of PARTICLE_COUNTS) {
+        const radius = radiusFor(count).toFixed(2);
+        const particles = count.toLocaleString('en-US');
+        console.log(`Measuring the ${pipeline} pipeline, ${particles} particles, radius ${radius}...`);
+        measured.push(await measure(device, pipeline, count, timestamps));
+      }
     }
     const error = await device.popErrorScope();
     if (error) throw new Error(`WebGPU validation error: ${error.message}`);
@@ -135,7 +150,10 @@ it('benchmark', { timeout: 30 * 60_000 }, async () => {
     device.destroy();
   }
 
-  console.log(`\n${formatTable(results)}\n`);
+  for (const [pipeline, measured] of results) {
+    console.log(`\nThe ${pipeline} pipeline\n${formatTable(measured)}`);
+  }
+  console.log('');
   if (timestamps) {
     console.log(
       `Stages are GPU time from timestamp queries over ${TIMED_SUBSTEPS} substeps, ` +

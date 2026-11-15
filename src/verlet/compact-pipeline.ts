@@ -1,9 +1,11 @@
 import { readBuffer } from '../read-buffer';
+import { BinGrid, BinGridSize } from './bin-grid';
 import {
   compactInstanceLayout,
   packCompactParticles,
   Particle,
-  unpackCompactParticles
+  unpackCompactParticles,
+  unpackCompactParticlesInPlace
 } from './particle-layout';
 import type { Pipeline, PipelineOptions } from './pipeline';
 import { computeShaderSource } from './shader-source';
@@ -20,19 +22,42 @@ const shaders = {
 
 type Stage = keyof typeof shaders;
 
+/** What a bin grid build left behind, for tests of the build on its own. */
+export interface BinGridContents {
+  grid: BinGridSize;
+  /** The particles in the order they sit in the particle buffer. */
+  particles: Particle[];
+  /** Where each bin's run of particles starts, then the number of particles. */
+  binStarts: Uint32Array;
+}
+
+function largestRadius(particles: Particle[]): number {
+  return particles.reduce((largest, p) => Math.max(largest, p.radius), 0);
+}
+
 /**
  * The new pipeline (spec #9), being built beside the current one: the compact
  * particle with an explicit velocity, and its colour in a buffer of its own.
- * It has no collisions yet.
+ * Every substep builds the bin grid, which leaves the particles in bin order in
+ * the other of two particle buffers. It has no collisions yet.
  */
 export class CompactPipeline implements Pipeline {
   private device: GPUDevice;
   private particleCount: number;
-  private particleBuffer: GPUBuffer;
+  /**
+   * Two particle buffers: each build reads the particles from one and writes
+   * them in bin order to the other, which then holds the particles.
+   */
+  private particleBuffers: [GPUBuffer, GPUBuffer];
+  /** Which of the particle buffers holds the particles. */
+  private current: 0 | 1 = 0;
   /** One colour per particle, at its particle id. Only drawing reads it. */
   private colorBuffer: GPUBuffer;
+  private binGrid: BinGrid;
   private pipelines: Record<Stage, GPUComputePipeline>;
-  private bindGroups: GPUBindGroup[];
+  private paramsGroup: GPUBindGroup;
+  /** Per buffer holding the particles: it at binding 0, the other at binding 1. */
+  private particleGroups: [GPUBindGroup, GPUBindGroup];
   private renderer: VerletRenderer;
 
   constructor(device: GPUDevice, options: PipelineOptions) {
@@ -40,35 +65,49 @@ export class CompactPipeline implements Pipeline {
     this.particleCount = options.particles.length;
 
     const { particleData, colorData } = packCompactParticles(options.particles);
-    this.particleBuffer = device.createBuffer({
-      size: particleData.byteLength,
-      usage:
-        GPUBufferUsage.STORAGE |
-        GPUBufferUsage.VERTEX |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC
-    });
+    const particleBuffer = () =>
+      device.createBuffer({
+        size: particleData.byteLength,
+        usage:
+          GPUBufferUsage.STORAGE |
+          GPUBufferUsage.VERTEX |
+          GPUBufferUsage.COPY_DST |
+          GPUBufferUsage.COPY_SRC
+      });
+    this.particleBuffers = [particleBuffer(), particleBuffer()];
     this.colorBuffer = device.createBuffer({
       size: colorData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
-    device.queue.writeBuffer(this.particleBuffer, 0, particleData);
+    device.queue.writeBuffer(this.particleBuffers[0], 0, particleData);
     device.queue.writeBuffer(this.colorBuffer, 0, colorData);
 
     try {
-      // The groups common.wgsl declares: params at group 0, binding 1, and
-      // group 1, which the bin grid (#16) will use. The particles are group 2.
-      const groupLayouts = [
-        device.createBindGroupLayout({
-          entries: [{ binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }]
-        }),
-        device.createBindGroupLayout({ entries: [] }),
-        device.createBindGroupLayout({
-          entries: [{ binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }]
-        })
-      ];
-      const layout = device.createPipelineLayout({ bindGroupLayouts: groupLayouts });
+      // The groups common.wgsl declares: params at group 0, binding 1, and the
+      // bin grid at group 1. The particles are group 2.
+      const paramsLayout = device.createBindGroupLayout({
+        entries: [{ binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }]
+      });
+      const particlesLayout = device.createBindGroupLayout({
+        entries: [0, 1].map((binding) => ({
+          binding,
+          visibility: GPUShaderStage.COMPUTE,
+          buffer: { type: 'storage' as const }
+        }))
+      });
 
+      this.binGrid = new BinGrid(device, {
+        bounds: options.bounds,
+        minBinSize: options.minBinSize,
+        largestRadius: largestRadius(options.particles),
+        particleCount: this.particleCount,
+        paramsLayout,
+        particlesLayout
+      });
+
+      const layout = device.createPipelineLayout({
+        bindGroupLayouts: [paramsLayout, this.binGrid.layout, particlesLayout]
+      });
       this.pipelines = {} as Record<Stage, GPUComputePipeline>;
       for (const stage of Object.keys(shaders) as Stage[]) {
         this.pipelines[stage] = device.createComputePipeline({
@@ -81,17 +120,20 @@ export class CompactPipeline implements Pipeline {
         });
       }
 
-      this.bindGroups = [
+      this.paramsGroup = device.createBindGroup({
+        layout: paramsLayout,
+        entries: [{ binding: 1, resource: { buffer: options.paramsBuffer } }]
+      });
+      const particleGroup = (from: GPUBuffer, to: GPUBuffer) =>
         device.createBindGroup({
-          layout: groupLayouts[0],
-          entries: [{ binding: 1, resource: { buffer: options.paramsBuffer } }]
-        }),
-        device.createBindGroup({ layout: groupLayouts[1], entries: [] }),
-        device.createBindGroup({
-          layout: groupLayouts[2],
-          entries: [{ binding: 0, resource: { buffer: this.particleBuffer } }]
-        })
-      ];
+          layout: particlesLayout,
+          entries: [
+            { binding: 0, resource: { buffer: from } },
+            { binding: 1, resource: { buffer: to } }
+          ]
+        });
+      const [a, b] = this.particleBuffers;
+      this.particleGroups = [particleGroup(a, b), particleGroup(b, a)];
 
       this.renderer = new VerletRenderer(device, {
         projection: options.projection,
@@ -102,52 +144,107 @@ export class CompactPipeline implements Pipeline {
       });
     } catch (error) {
       // Nothing outside holds a reference yet, so release what was created.
-      this.particleBuffer.destroy();
+      this.particleBuffers.forEach((buffer) => buffer.destroy());
       this.colorBuffer.destroy();
+      this.binGrid?.destroy();
       throw error;
     }
+  }
+
+  /** The buffer that holds the particles. */
+  private get particleBuffer(): GPUBuffer {
+    return this.particleBuffers[this.current];
   }
 
   write(particles: Particle[]) {
     const { particleData, colorData } = packCompactParticles(particles);
     this.device.queue.writeBuffer(this.particleBuffer, 0, particleData);
     this.device.queue.writeBuffer(this.colorBuffer, 0, colorData);
+    this.binGrid.resize(largestRadius(particles));
   }
 
   /**
    * Encodes one substep: a single compute pass, or with a timer one pass per
    * stage. The stages run in the order spec #9 fixes: integrate, build the bin
-   * grid (#16), solve collisions (#17), the boundary, then the velocity update
+   * grid, solve collisions (#17), the boundary, then the velocity update
    * (#17). The new pipeline has no collisions yet, so `collide` has no effect.
    */
   encodeSubstep(encoder: GPUCommandEncoder, _collide: boolean, timer?: StageTimer) {
-    const stages: Stage[] = ['integrate', 'constrain'];
-    const perParticle = Math.ceil(this.particleCount / 64);
-    const dispatch = (pass: GPUComputePassEncoder, stage: Stage) => {
-      pass.setPipeline(this.pipelines[stage]);
-      pass.dispatchWorkgroups(perParticle);
-    };
+    this.encodeStages(encoder, [
+      this.particleStage('integrate'),
+      ...this.binGridStages(),
+      // The collision solve (#17) goes here: it reads the particles in bin
+      // order, with the bin grid's bind group giving each bin's run.
+      this.particleStage('constrain')
+    ], timer);
+  }
 
+  /** Encodes only a bin grid build, for tests of the build on its own. */
+  encodeBinGridBuild(encoder: GPUCommandEncoder) {
+    this.encodeStages(encoder, this.binGridStages());
+  }
+
+  /** What the latest bin grid build left behind, for tests of the build on its own. */
+  async readBinGrid(): Promise<BinGridContents> {
+    const grid = this.binGrid.size;
+    const [particles, colors, binStarts] = await Promise.all([
+      readBuffer(this.device, this.particleBuffer),
+      readBuffer(this.device, this.colorBuffer),
+      this.binGrid.readStarts()
+    ]);
+    return { grid, particles: unpackCompactParticlesInPlace(particles, colors), binStarts };
+  }
+
+  /**
+   * The stages of a build. The last swaps which buffer holds the particles as
+   * it is encoded, so every stage encoded after it reads them in bin order.
+   */
+  private binGridStages(): [string, (pass: GPUComputePassEncoder) => void][] {
+    const stages = this.binGrid.stages({
+      params: this.paramsGroup,
+      particles: this.particleGroups[this.current]
+    });
+    const [name, place] = stages[stages.length - 1];
+    stages[stages.length - 1] = [
+      name,
+      (pass) => {
+        place(pass);
+        this.current = this.current === 0 ? 1 : 0;
+      }
+    ];
+    return stages;
+  }
+
+  /** A stage that runs once per particle, on the buffer holding them when it is encoded. */
+  private particleStage(stage: Stage): [string, (pass: GPUComputePassEncoder) => void] {
+    return [
+      stage,
+      (pass) => {
+        pass.setPipeline(this.pipelines[stage]);
+        pass.setBindGroup(0, this.paramsGroup);
+        pass.setBindGroup(1, this.binGrid.bindGroup);
+        pass.setBindGroup(2, this.particleGroups[this.current]);
+        pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
+      }
+    ];
+  }
+
+  private encodeStages(
+    encoder: GPUCommandEncoder,
+    stages: [string, (pass: GPUComputePassEncoder) => void][],
+    timer?: StageTimer
+  ) {
     if (!timer) {
-      const pass = this.beginPass(encoder);
-      for (const stage of stages) dispatch(pass, stage);
+      const pass = encoder.beginComputePass();
+      for (const [, dispatch] of stages) dispatch(pass);
       pass.end();
       return;
     }
-    for (const stage of stages) {
-      const pass = this.beginPass(encoder, timer.timestampWrites(stage));
-      dispatch(pass, stage);
+    for (const [stage, dispatch] of stages) {
+      const pass = encoder.beginComputePass({ timestampWrites: timer.timestampWrites(stage) });
+      dispatch(pass);
       pass.end();
     }
-  }
-
-  private beginPass(
-    encoder: GPUCommandEncoder,
-    timestampWrites?: GPUComputePassTimestampWrites
-  ): GPUComputePassEncoder {
-    const pass = encoder.beginComputePass({ timestampWrites });
-    this.bindGroups.forEach((group, i) => pass.setBindGroup(i, group));
-    return pass;
   }
 
   async read(): Promise<Particle[]> {
@@ -163,8 +260,9 @@ export class CompactPipeline implements Pipeline {
   }
 
   destroy() {
-    this.particleBuffer.destroy();
+    this.particleBuffers.forEach((buffer) => buffer.destroy());
     this.colorBuffer.destroy();
+    this.binGrid.destroy();
     this.renderer.destroy();
   }
 }

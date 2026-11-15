@@ -31,7 +31,7 @@ While spec #9's new pipeline is built beside the current one, the `pipeline` con
 - `step` writes the params uniform once with `queue.writeBuffer`, then encodes the substeps. The write takes effect when the encoder is submitted, so call `step` at most once per submitted encoder.
 - `step` takes an optional stage timer, used only by the benchmark (`bench/`). With one, each stage of a substep is encoded as its own compute pass carrying the timer's timestamp writes; without one, a substep is a single compute pass. Both pipelines honour it.
 - The current pipeline's physics is position Verlet, so it holds velocity as a displacement per substep, converting at the interface at the latest substep rate. Changing the substep rate while running therefore rescales every particle's velocity at that moment. The new pipeline holds velocity explicitly.
-- Starting particles come from a `seed` function (default: `scatter`, a random scatter with an injectable random source). `reset()` calls it again. The particle count and the bin size are derived from the first seeding and are fixed afterwards.
+- Starting particles come from a `seed` function (default: `scatter`, a random scatter with an injectable random source). `reset()` calls it again. The particle count is derived from the first seeding and is fixed afterwards. The current pipeline's bin size is too, so `reset()` rejects a seed with a larger particle; the new pipeline resizes its bins on `reset()`.
 
 ### Particle layout
 
@@ -46,7 +46,7 @@ A radius of 0 marks a particle as disabled: it is not drawn, and in the current 
 
 ### Shader assembly
 
-WGSL has no imports. `shader-source.ts` is the one place compute shader source is assembled: it prepends `common.wgsl` (shared structs, plus the `params` uniform at group 0 binding 1 and `binParams` at group 1) to each shader body. `common.wgsl` also holds what both pipelines compute alike: `constrainToBoundary` (the boundary stage) and `limitLength` (the speed limit). Each compute shader then declares only the group 2 storage bindings it uses: in the current pipeline `verletObjects` (0), `bins` (1), `cso` (2); in the new pipeline `particles` (0).
+WGSL has no imports. `shader-source.ts` is the one place compute shader source is assembled: it prepends `common.wgsl` (shared structs, plus the `params` uniform at group 0 binding 1 and `binParams` at group 1) to each shader body. `common.wgsl` also holds what both pipelines compute alike: `constrainToBoundary` (the boundary stage) and `limitLength` (the speed limit). Each compute shader then declares only the group 2 storage bindings it uses: in the current pipeline `verletObjects` (0), `bins` (1), `cso` (2); in the new pipeline `particles` (0) and, in the bin grid build, `sortedParticles` (1). The new pipeline's bin grid uniform is group 1, binding 1, beside the current pipeline's `binParams` at binding 0. The bin grid scan binds its own storage at group 0, bindings 2 and 3, so no dispatch binds the bin starts twice.
 
 `VerletRenderer` assembles the render shader from `particle-disc.wgsl` (the projection and the fragment shader) followed by the pipeline's vertex shader, `verlet-renderer.wgsl` or `compact-renderer.wgsl`.
 
@@ -67,11 +67,25 @@ Steps 1 and 3 are skipped when collision is off.
 The new pipeline has no collisions yet, so the `collide` input has no effect on it. Dispatched in this order:
 
 1. `compact-integrate` adds gravity (3000 units per second squared along +y, the same for every particle whatever its radius) or the click force (1.5 units per second squared per unit of force) to velocity, applies the speed limit to velocity, then advances position. A particle exactly at the click point receives no click force. Both constants equal what the current pipeline gives a particle of the app's radius, 1.5.
-2. `compact-constrain` applies the selected constrain, as in the current pipeline.
+2. The bin grid build (below), which leaves the particles in bin order in the other particle buffer. It runs every substep, whether or not collision is on.
+3. `compact-constrain` applies the selected constrain, as in the current pipeline.
 
-Spec #9 fixes the order the remaining stages join in: the bin grid build and the collision solve go between these two, and the velocity update after the boundary.
+Spec #9 fixes the order the remaining stages join in: the collision solve goes between the build and the boundary, and the velocity update after the boundary.
 
-### Bin grid
+With a stage timer the stages are named `integrate`, `bin count`, `bin scan`, `bin place` and `constrain`.
+
+### Bin grid (new pipeline)
+
+`BinGrid` (`bin-grid.ts`, shaders `compact-bin-grid.wgsl` and `compact-scan.wgsl`) is a dense grid of square bins over the square of side `bounds`, rebuilt every substep by counting sort (ADR-0003).
+
+- **Sizing** is the pure function `sizeBinGrid`: a bin is one diameter of the largest particle in use wide, never smaller than the configured minimum bin size (the `minBinSize` construction option, by default the largest diameter of the first seeding). The grid covers the bounds, so the last row and column may be part-filled; the bin size need not be a whole number. Bin buffers are allocated once, for the minimum bin size; `write` (and so `reset`) resizes the bins for the new particles' largest radius.
+- **Bin coordinates** are clamped into the grid (`binCoords` in `common.wgsl`), so a particle outside the grid, or with a non-finite position, is placed in an edge bin.
+- **The build:** `clearBins` and `countBins` count the particles in each bin; a blocked exclusive prefix sum turns the counts into each bin's start; `writeKeys` lists each bin's particle ids in its run of `binKeys`; `placeParticles` copies each particle to its bin's start plus its rank by particle id among that bin's ids. Afterwards bin `b`'s particles are `binStarts[b]` up to `binStarts[b + 1]`, in particle id order. The atomic counts decide only where an id is listed, never where a particle is placed, so the order is fixed at build time and never depends on thread timing (ADR-0001). Ranking costs each particle one read per particle in its bin.
+- **The scan** works in blocks of 256: each workgroup scans its block in workgroup memory and writes the block's total to the level above; levels repeat until one block holds every total (three levels above the counts for 4.7 million bins), then each level's scanned totals are added back into the level below. Its work is linear in the number of bins. A grid is limited to `MAX_BINS` (about 16.7 million), so every dispatch over bins fits in one dimension.
+- **Two particle buffers:** each build reads the particles from one and writes them in bin order to the other, which then holds the particles. `CompactPipeline` tracks which as it encodes, and draws and reads back from it. Colour is indexed by particle id, so it follows each particle.
+- **For the collision solve (#17):** the bin grid's bind group (group 1) holds the grid uniform `binGrid` (binding 1) and `binStarts` (binding 2); the particles in bin order are group 2, binding 0, for every stage encoded after the build.
+
+### Bin grid (current pipeline)
 
 A dense grid over simulation space, not a hash table. The grid uses bins as wide as the largest particle's diameter. `bins[bin]` holds the index of the head particle and each particle's `binLink` points to the next, forming a per-bin linked list terminated by -1. A particle outside the grid is put in the nearest edge bin.
 

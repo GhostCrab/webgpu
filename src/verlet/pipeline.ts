@@ -8,7 +8,10 @@ import type { StageTimer } from './verlet-bin-computer';
  * whichever was chosen when it was constructed.
  */
 export interface Pipeline {
-  /** Replaces every particle. Particle ids run from 0 in the order given. */
+  /**
+   * Replaces every particle. Particle ids run from 0 in the order given.
+   * Throws if the pipeline's bins cannot hold the particles' radii.
+   */
   write(particles: Particle[], substepRate: number): void;
   /**
    * Encodes one substep, reading the simulation params uniform. Without a
@@ -30,8 +33,13 @@ export interface PipelineOptions {
   substepRate: number;
   /** Side of the square region of simulation space that particles may occupy. */
   bounds: number;
-  /** At least the diameter of the largest particle. */
+  /** At least the diameter of the largest particle. The current pipeline's bins keep it. */
   binSize: number;
+  /**
+   * The smallest bin size configured. The new pipeline allocates its bin
+   * buffers for it, and sizes its bins from the radii in use, never smaller.
+   */
+  minBinSize: number;
   /** The simulation params uniform (the Params struct in common.wgsl). */
   paramsBuffer: GPUBuffer;
   /** Maps simulation space to clip space; a 4x4 matrix. */
