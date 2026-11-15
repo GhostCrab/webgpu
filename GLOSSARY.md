@@ -68,7 +68,7 @@ _Avoid_: World space, sim resolution
 The arrangement of one particle's fields in memory, shared by the shaders and the code that reads and writes particles.
 
 **Simulation input**:
-Everything outside the simulation that affects one frame of it: the click force and its point, the boundary circle's radius and behaviour, and whether particles collide.
+Everything outside the simulation that affects one frame of it: the click force and its point, the boundary circle's radius and behaviour, whether particles collide, and the substep rate.
 _Avoid_: Params, sim params
 
 **Simulation controls**:

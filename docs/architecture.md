@@ -2,24 +2,31 @@
 
 Terms such as particle, bin, substep and simulation input are defined in `GLOSSARY.md`. The shader structs keep the older name `VerletObject` for a particle.
 
-`Renderer` (`src/renderer.ts`) owns the canvas and the frame loop and wires the other modules together. Each frame it asks the controls for the simulation input, steps the simulation, and has the target draw and present it.
+`Renderer` (`src/renderer.ts`) owns the canvas and the frame loop and wires the other modules together. Each frame it asks the controls for the simulation input, asks the clock how many substeps the elapsed time calls for, steps the simulation by that many, and has the target draw and present it.
 
 ```
 input-bindings.ts ─┐
-                   ├─> SimulationControls ── SimulationInput ──> Verlet.step()
-gui-wrapper.ts ────┘                                             Verlet.draw() <── SimulationTarget.render()
+                   ├─> SimulationControls ── SimulationInput ──┐
+gui-wrapper.ts ────┘                                           ├──> Verlet.step()
+   frame timestamp ──> Clock ── substeps ──────────────────────┘    Verlet.draw() <── SimulationTarget.render()
 ```
+
+## Clock (`src/clock.ts`)
+
+A pure module that turns the time elapsed between frames into a whole number of substeps at the substep rate (ADR-0001). Elapsed time comes from the timestamp `requestAnimationFrame` passes. Time too short for a whole substep is carried into the next frame. One frame is credited with at most 1/60 s (`MAX_FRAME_TIME`); time beyond that is dropped, so after a stall or when the GPU falls behind the simulation runs slower than real time instead of lurching. `advance()` also reports the substeps the frame wanted before that limit, which the settings panel shows beside the substeps run. While paused the renderer does not advance the clock.
 
 ## Simulation controls (`src/simulation-controls.ts`)
 
-Holds the user-adjustable settings and the click force rules, and produces a `SimulationInput` once per frame via `frameInput()`. It knows nothing about the DOM or the GPU. Two adapters drive it: `input-bindings.ts` (mouse and keyboard, via `game-inputs`) and `gui-wrapper.ts` (lil-gui, bound directly to the controls object's fields with `.listen()`, so there is one copy of the state).
+Holds the user-adjustable settings (including the substep rate, default 1200 per second) and the click force rules, and produces a `SimulationInput` once per frame via `frameInput()`. It knows nothing about the DOM or the GPU. Two adapters drive it: `input-bindings.ts` (mouse and keyboard, via `game-inputs`) and `gui-wrapper.ts` (lil-gui, bound directly to the controls object's fields with `.listen()`, so there is one copy of the state).
 
 ## Simulation (`src/verlet/`)
 
-`Verlet` is the interface to the simulation: `step(encoder, frameTime, input)`, `draw(pass)`, `reset()`, `readParticles()`, `destroy()`. It owns the particle buffer, the params uniform, the substep count (20) and the projection. `VerletBinComputer` and `VerletRenderer` are internal to it.
+`Verlet` is the interface to the simulation: `step(encoder, substeps, input)`, `draw(pass)`, `reset()`, `readParticles()`, `destroy()`. It owns the particle buffer, the params uniform and the projection. `VerletBinComputer` and `VerletRenderer` are internal to it.
 
-- `step` writes the params uniform once with `queue.writeBuffer`, then encodes all substeps. The write takes effect when the encoder is submitted, so call `step` at most once per submitted encoder.
-- Starting particles come from a `seed` function (default: `scatter`, a random scatter with an injectable random source). `reset()` calls it again. The particle count and the bin size are derived from the first seeding and are fixed afterwards.
+- `step` advances by a whole number of substeps. Each covers `1 / input.substepRate` seconds; the substep rate is the only thing that sets a substep's length, and how substeps are split between calls does not change the result.
+- `step` writes the params uniform once with `queue.writeBuffer`, then encodes the substeps. The write takes effect when the encoder is submitted, so call `step` at most once per submitted encoder.
+- The physics is still position Verlet, so velocity is held as a displacement per substep. Changing the substep rate while running therefore rescales every particle's velocity at that moment, until the explicit velocity of the new pipeline replaces it.
+- Starting particles come from a `seed` function (default: `scatter`, a random scatter with an injectable random source, its starting velocities scaled to the latest substep rate). `reset()` calls it again. The particle count and the bin size are derived from the first seeding and are fixed afterwards.
 
 ### Particle layout
 

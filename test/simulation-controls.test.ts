@@ -104,6 +104,13 @@ describe('settings', () => {
     expect(controls().paused).toBe(false);
   });
 
+  test('start at 1200 substeps per second, which the user can change', () => {
+    const c = controls();
+    expect(c.frameInput().substepRate).toBe(1200);
+    c.substepRate = 2400;
+    expect(c.frameInput().substepRate).toBe(2400);
+  });
+
   test('toggles and direct writes both reach the simulation input', () => {
     const c = controls();
     c.toggle('collide');

@@ -1,3 +1,4 @@
+import { DEFAULT_SUBSTEP_RATE } from './clock';
 import type { SimulationInput } from './verlet/verlet';
 
 /** Which way a held mouse button drives the click force. */
@@ -20,6 +21,8 @@ export class SimulationControls {
   constrainRadius: number;
   /** Strength a click force takes when a button is pressed. */
   impulse = 2000;
+  /** Substeps per second of simulated time: the simulation's accuracy. */
+  substepRate = DEFAULT_SUBSTEP_RATE;
 
   private pointer: [number, number] = [0, 0];
   private held: Record<ClickButton, boolean> = { attract: false, repel: false };
@@ -75,7 +78,8 @@ export class SimulationControls {
       clickForce: this.clickForce,
       constrainRadius: this.constrainRadius,
       classicConstrain: this.classicConstrain,
-      collide: this.collide
+      collide: this.collide,
+      substepRate: this.substepRate
     };
   }
 }

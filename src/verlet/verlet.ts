@@ -1,3 +1,4 @@
+import { DEFAULT_SUBSTEP_RATE } from '../clock';
 import {
   packParams,
   packParticles,
@@ -35,8 +36,8 @@ export interface ScatterOptions {
   /** Particles are scattered over a square of this side, centred on the origin. */
   bounds: number;
   radius: number;
-  /** Substeps per frame; the starting velocity is scaled to it. */
-  substeps: number;
+  /** Substeps per second; the starting velocity is expressed per substep. */
+  substepRate: number;
   /** Source of numbers in [0, 1). Defaults to Math.random. */
   random?: () => number;
 }
@@ -46,7 +47,9 @@ export interface ScatterOptions {
  * random velocity and a shade of one random hue.
  */
 export function scatter(options: ScatterOptions): Particle[] {
-  const { count, bounds, radius, substeps } = options;
+  const { count, bounds, radius, substepRate } = options;
+  // Starting speeds of up to 360 units per second each way.
+  const maxShift = 360 / substepRate;
   const random = options.random ?? Math.random;
 
   const hue = random();
@@ -60,8 +63,8 @@ export function scatter(options: ScatterOptions): Particle[] {
   for (let i = 0; i < count; i++) {
     const x = random() * bounds - bounds / 2;
     const y = random() * bounds - bounds / 2;
-    const prevX = x + ((random() - 0.5) * 12) / substeps;
-    const prevY = y + ((random() - 0.5) * 12) / substeps;
+    const prevX = x + (random() - 0.5) * 2 * maxShift;
+    const prevY = y + (random() - 0.5) * 2 * maxShift;
     const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, random()), 1);
     particles.push({ x, y, prevX, prevY, radius, rgb });
   }
@@ -101,6 +104,11 @@ export interface SimulationInput {
   classicConstrain: boolean;
   /** Whether particles collide with each other. */
   collide: boolean;
+  /**
+   * Substeps per second of simulated time. It alone sets the length of a
+   * substep.
+   */
+  substepRate: number;
 }
 
 export interface VerletOptions {
@@ -110,8 +118,6 @@ export interface VerletOptions {
   projection: Float32Array;
   /** The render pass configuration that draw() renders into. */
   target: DrawTarget;
-  /** Substeps per frame. Defaults to 20. */
-  substeps?: number;
   /**
    * Produces the starting particles, and is called again by reset(). It must
    * return the same number of particles each time. Defaults to a random
@@ -126,7 +132,6 @@ export interface VerletOptions {
  */
 export class Verlet {
   readonly particleCount: number;
-  readonly substeps: number;
 
   /** The compute stage. Exposed for tests of the binning stage only. */
   readonly computer: VerletBinComputer;
@@ -136,6 +141,8 @@ export class Verlet {
   private seed: () => Particle[];
   private binSize: number;
   private totalTime = 0;
+  /** The substep rate of the latest step, which the default seed scales to. */
+  private substepRate = DEFAULT_SUBSTEP_RATE;
 
   private particleBuffer: GPUBuffer;
   private paramsBuffer: GPUBuffer;
@@ -144,16 +151,13 @@ export class Verlet {
   constructor(device: GPUDevice, options: VerletOptions) {
     this.device = device;
     this.bounds = options.bounds;
-    this.substeps = options.substeps ?? 20;
     this.seed =
       options.seed ??
-      (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5, substeps: this.substeps }));
+      (() =>
+        scatter({ count: 15000, bounds: this.bounds, radius: 1.5, substepRate: this.substepRate }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);
-    }
-    if (!Number.isInteger(this.substeps) || this.substeps < 1) {
-      throw new Error(`substeps must be a positive whole number; got ${this.substeps}`);
     }
 
     const particles = this.seed();
@@ -214,20 +218,30 @@ export class Verlet {
   }
 
   /**
-   * Advances the simulation by one frame of `frameTime` seconds, as
-   * `substeps` equal substeps, encoding the work into `encoder`.
+   * Advances the simulation by `substeps` substeps, each 1 / substepRate
+   * seconds long, encoding the work into `encoder`.
    *
-   * The input applies to the whole frame. It reaches the GPU when the encoder
-   * is submitted, so call this at most once per submitted encoder.
+   * The input applies to every one of them. It reaches the GPU when the
+   * encoder is submitted, so call this at most once per submitted encoder.
    */
-  step(encoder: GPUCommandEncoder, frameTime: number, input: SimulationInput) {
-    this.totalTime += frameTime;
+  step(encoder: GPUCommandEncoder, substeps: number, input: SimulationInput) {
+    if (!Number.isInteger(substeps) || substeps < 0) {
+      throw new Error(`substeps must be a whole number, 0 or more; got ${substeps}`);
+    }
+    const { substepRate } = input;
+    if (!(substepRate > 0) || !Number.isFinite(substepRate)) {
+      throw new Error(`substep rate must be a positive number; got ${substepRate}`);
+    }
+    if (substeps === 0) return;
+
+    this.substepRate = substepRate;
+    this.totalTime += substeps / substepRate;
     this.device.queue.writeBuffer(
       this.paramsBuffer,
       0,
       packParams({
         totalTime: this.totalTime,
-        deltaTime: frameTime / this.substeps,
+        deltaTime: 1 / substepRate,
         constrainRadius: input.constrainRadius,
         boxDim: this.bounds,
         constrainType: input.classicConstrain ? 0 : 1,
@@ -235,7 +249,7 @@ export class Verlet {
       })
     );
 
-    for (let i = 0; i < this.substeps; i++) {
+    for (let i = 0; i < substeps; i++) {
       this.computer.encodeSubstep(encoder, input.collide);
     }
   }
