@@ -11,6 +11,9 @@ let devicePromise: Promise<GPUDevice | null> | undefined;
 /** Resolves to null when this machine has no usable GPU; GPU tests then skip. */
 export function getDevice(): Promise<GPUDevice | null> {
   devicePromise ??= (async () => {
+    // CI sets NO_GPU: a hosted runner may offer a software adapter, which is
+    // too slow and too different for the measured baselines.
+    if (process.env.NO_GPU) return null;
     const adapter = await gpu.requestAdapter();
     if (!adapter) return null;
     const device = await adapter.requestDevice();

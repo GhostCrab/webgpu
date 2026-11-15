@@ -1,6 +1,7 @@
 import { SimulationControls } from './simulation-controls';
 
-// lil-gui is loaded via CDN in index.html
+// lil-gui is loaded via CDN in index.html, so it has no type definitions here.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const lil: any;
 
 export interface GuiStats {
@@ -15,6 +16,7 @@ export interface GuiStats {
  * controls object, so the panel and the keyboard shortcuts share one state.
  */
 export default class GuiWrapper {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   gui: any;
   private stats: { fps: string | number; particleCount: number; stepCount: number; simResolution: string };
 

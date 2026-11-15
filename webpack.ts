@@ -3,12 +3,12 @@ import { CleanWebpackPlugin } from 'clean-webpack-plugin';
 import path from 'path';
 import { argv } from 'process';
 
-let env = process.env['NODE_ENV'];
-let isProduction =
+const env = process.env['NODE_ENV'];
+const isProduction =
     (env && env.match(/production/)) ||
     argv.reduce((prev, cur) => prev || cur === '--production', false);
 
-let config: webpack.Configuration = {
+const config: webpack.Configuration = {
     context: path.join(__dirname, 'src'),
     entry: {
         app: './main.ts'
@@ -68,12 +68,12 @@ if (!argv.reduce((prev, cur) => prev || cur === '--watch', false)) {
           console.log("✔️ ERROR: NO STATS, NO ERROR?")
         } else {
           if (stats.hasErrors()) {
-              let statsJson = stats.toJson();
+              const statsJson = stats.toJson();
               console.log(
                   '❌' + ' · Error · ' + 'build failed:'
               );
               if (statsJson && statsJson.errors) {
-                for (let error of statsJson.errors) {
+                for (const error of statsJson.errors) {
                     console.log(error.message);
                 }
               }
@@ -96,12 +96,12 @@ if (!argv.reduce((prev, cur) => prev || cur === '--watch', false)) {
           console.log("✔️ ERROR: NO STATS, NO ERROR?")
         } else {
           if (stats.hasErrors()) {
-              let statsJson = stats.toJson();
+              const statsJson = stats.toJson();
               console.log(
                   '❌' + ' · Error · ' + 'build failed:'
               );
               if (statsJson && statsJson.errors) {
-                for (let error of statsJson.errors) {
+                for (const error of statsJson.errors) {
                     console.log(error.message);
                 }
               }

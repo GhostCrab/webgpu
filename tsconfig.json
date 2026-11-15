@@ -25,6 +25,7 @@
     "strictNullChecks": false,
     "jsx": "react",
     "esModuleInterop": true,
+    "skipLibCheck": true,
     "allowSyntheticDefaultImports": true
   },
   "include": [
