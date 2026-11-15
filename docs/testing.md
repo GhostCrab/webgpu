@@ -16,7 +16,7 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 ## The harness
 
-`test/sim-harness.ts` is the test surface for the simulation: place particles, advance them by a number of substeps (`sim.step(20)` is one 60 Hz frame at the default rate of 1200 per second; `substepRate` is an input), read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
+`test/sim-harness.ts` is the test surface for the simulation: place particles, advance them by a number of substeps (`sim.step(20)` is one 60 Hz frame at the harness's rate of 1200 per second, half the app's default; `substepRate` is an input), read particles back, render to an offscreen canvas. Add scenarios through it; tests do not build pipelines themselves.
 
 - `readBinGrid()` (new pipeline only) runs one bin grid build on its own and returns the particles in the order they sit in memory, with each bin's start; `test/bin-grid.test.ts` checks builds through it. The GPU computes bins in 32-bit floats, so a particle within a hair of a bin edge may sit in either bin; those checks allow for it.
 - `createSim(particles, { pipeline })` picks the pipeline, `'current'` by default. Behaviour both pipelines share is tested against each in `PIPELINES` with `describe.each`.
@@ -28,13 +28,14 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 
 ## What can be asserted
 
-Binning uses atomics, so the order particles are visited in differs between runs, and the four-pass collide races (see `docs/architecture.md`). For both reasons **individual particle positions are not reproducible** in multi-particle runs. Assert on one of:
+In the current pipeline binning uses atomics, so the order particles are visited in differs between runs, and the four-pass collide races (see `docs/architecture.md`). For both reasons **individual particle positions are not reproducible** in its multi-particle runs. The new pipeline is deterministic (ADR-0001): a scene run twice on the same machine gives identical particles, which a test asserts. Its exact positions still differ between machines, so they are never stored as baselines. Assert on one of:
 
 - **Hand-computable results** for one or two particles (free fall, a click force, the boundary).
 - **Invariants**: no non-finite values, every particle inside the boundary circle, every particle in exactly one bin list.
 - **Aggregate statistics with a tolerance**, from `runStats`.
+- **Run-twice equality**, new pipeline only.
 
-The aggregate ranges in `simulation.test.ts` are measured values. If a deliberate behaviour change moves them, re-measure over at least four runs and widen each range to several times the spread.
+The aggregate ranges in `simulation.test.ts` are measured values. If a deliberate behaviour change moves them, re-measure over at least four runs and widen each range to several times the spread. New-pipeline runs of one scene do not vary, so its ranges are measured over four scatter seeds instead.
 
 ## Checking a claim by running it
 

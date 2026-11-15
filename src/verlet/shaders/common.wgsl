@@ -15,6 +15,15 @@ struct Params {
   constrainCenter: vec4<f32>,
   // xy: the point, z: the force (positive attracts, negative repels, 0 is off)
   clickPoint: vec4<f32>,
+  // The new pipeline's collision solve (spec #9). Each particle's averaged
+  // correction is scaled by the relaxation factor.
+  relaxation: f32,
+  // Fraction of the relative normal speed two particles keep when they collide.
+  particleRestitution: f32,
+  // Fraction of the relative speed along the contact two particles lose when
+  // they collide.
+  particleDamping: f32,
+  unused3: f32,
 };
 
 // A particle of the new pipeline (spec #9). Its colour is not here: it lives in

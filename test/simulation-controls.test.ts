@@ -104,11 +104,28 @@ describe('settings', () => {
     expect(controls().paused).toBe(false);
   });
 
-  test('start at 1200 substeps per second, which the user can change', () => {
+  test('start at 2400 substeps per second, which the user can change', () => {
     const c = controls();
-    expect(c.frameInput().substepRate).toBe(1200);
-    c.substepRate = 2400;
     expect(c.frameInput().substepRate).toBe(2400);
+    c.substepRate = 1200;
+    expect(c.frameInput().substepRate).toBe(1200);
+  });
+
+  test('start with the accepted collision settings, which the user can change', () => {
+    const c = controls();
+    expect(c.frameInput()).toMatchObject({
+      relaxation: 1.25,
+      particleRestitution: 0.5,
+      particleDamping: 0
+    });
+    c.relaxation = 1;
+    c.particleRestitution = 0.8;
+    c.particleDamping = 0.1;
+    expect(c.frameInput()).toMatchObject({
+      relaxation: 1,
+      particleRestitution: 0.8,
+      particleDamping: 0.1
+    });
   });
 
   test('toggles and direct writes both reach the simulation input', () => {

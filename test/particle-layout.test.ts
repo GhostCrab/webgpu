@@ -59,7 +59,10 @@ test('params are packed where the shader struct puts them', () => {
     boxDim: 4,
     constrainType: 1,
     speedLimit: 8,
-    clickPoint: [5, 6, 7]
+    clickPoint: [5, 6, 7],
+    relaxation: 1.25,
+    particleRestitution: 0.5,
+    particleDamping: 0.25
   });
   const offset = Object.fromEntries(
     structShape('Params').fields.map(([name, fieldOffset]) => [name, fieldOffset / 4])
@@ -73,6 +76,9 @@ test('params are packed where the shader struct puts them', () => {
   expect(new Uint32Array(buffer)[offset.constrainType]).toBe(1);
   expect(floats[offset.speedLimit]).toBe(8);
   expect([...floats.subarray(offset.clickPoint, offset.clickPoint + 3)]).toEqual([5, 6, 7]);
+  expect(floats[offset.relaxation]).toBe(1.25);
+  expect(floats[offset.particleRestitution]).toBe(0.5);
+  expect(floats[offset.particleDamping]).toBe(0.25);
 });
 
 describe('the compact particle of the new pipeline', () => {

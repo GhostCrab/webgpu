@@ -1,5 +1,6 @@
 import { DEFAULT_SUBSTEP_RATE } from '../clock';
 import type { DrawTarget } from '../simulation-target';
+import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
 import { BinGridContents, CompactPipeline } from './compact-pipeline';
 import { CurrentPipeline } from './current-pipeline';
 import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
@@ -96,8 +97,11 @@ function withIds(particles: SeedParticle[]): Particle[] {
   return particles.map((p, id) => ({ ...p, id }));
 }
 
-/** Everything outside the simulation that affects one frame of it. */
-export interface SimulationInput {
+/**
+ * Everything outside the simulation that affects one frame of it. The
+ * collision settings apply to the new pipeline only.
+ */
+export interface SimulationInput extends CollisionSettings {
   /** Where the click force acts, in simulation space. */
   clickPoint: [number, number];
   /** Positive pulls toward the click point, negative pushes away, 0 leaves gravity on. */
@@ -140,6 +144,12 @@ export interface VerletOptions {
    */
   minBinSize?: number;
   /**
+   * The substep rate the simulation will first be stepped at. The current
+   * pipeline holds velocity as a move per substep, so it converts the seed's
+   * velocities at this rate. Defaults to the app's default substep rate.
+   */
+  substepRate?: number;
+  /**
    * Produces the starting particles, and is called again by reset(). It must
    * return the same number of particles each time. Defaults to a random
    * scatter of 15,000 particles of radius 1.5. Each particle's id is its
@@ -171,12 +181,16 @@ export class Verlet {
   constructor(device: GPUDevice, options: VerletOptions) {
     this.device = device;
     this.bounds = options.bounds;
+    this.substepRate = options.substepRate ?? DEFAULT_SUBSTEP_RATE;
     this.seed =
       options.seed ??
       (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5 }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);
+    }
+    if (!(this.substepRate > 0) || !Number.isFinite(this.substepRate)) {
+      throw new Error(`substep rate must be a positive number; got ${this.substepRate}`);
     }
 
     const particles = this.seed();
@@ -203,7 +217,8 @@ export class Verlet {
         boxDim: this.bounds,
         constrainType: 1,
         speedLimit: this.speedLimit,
-        clickPoint: [0, 0, 0]
+        clickPoint: [0, 0, 0],
+        ...DEFAULT_COLLISION_SETTINGS
       })
     );
 
@@ -265,7 +280,10 @@ export class Verlet {
         boxDim: this.bounds,
         constrainType: input.classicConstrain ? 0 : 1,
         speedLimit: this.speedLimit,
-        clickPoint: [input.clickPoint[0], input.clickPoint[1], input.clickForce]
+        clickPoint: [input.clickPoint[0], input.clickPoint[1], input.clickForce],
+        relaxation: input.relaxation,
+        particleRestitution: input.particleRestitution,
+        particleDamping: input.particleDamping
       })
     );
 

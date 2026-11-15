@@ -5,6 +5,7 @@ import { createRequire } from 'module';
 import { it } from 'vitest';
 
 import { DEFAULT_SUBSTEP_RATE } from '../src/clock';
+import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
 import { PipelineName, scatter, SimulationInput, Verlet } from '../src/verlet/verlet';
 import { mulberry32 } from '../test/sim-harness';
 import { GpuStageTimer } from './gpu-stage-timer';
@@ -33,7 +34,7 @@ const MEASURED_SUBSTEPS = 600;
 // Timestamp queries are limited to 4096 per query set, 2 per stage.
 const TIMED_SUBSTEPS = 200;
 // The most stages either pipeline splits a substep into.
-const MAX_STAGES = 5;
+const MAX_STAGES = 7;
 // Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
 const SUBSTEPS_PER_SUBMIT = 20;
 
@@ -43,7 +44,8 @@ const input: SimulationInput = {
   constrainRadius: CONSTRAIN_RADIUS,
   classicConstrain: false,
   collide: true,
-  substepRate: DEFAULT_SUBSTEP_RATE
+  substepRate: DEFAULT_SUBSTEP_RATE,
+  ...DEFAULT_COLLISION_SETTINGS
 };
 
 function radiusFor(count: number) {

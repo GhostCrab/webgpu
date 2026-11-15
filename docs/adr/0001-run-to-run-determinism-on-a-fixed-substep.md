@@ -13,4 +13,5 @@ To get it, a substep always covers the same span of simulated time. The substep 
 ## Consequences
 
 - Tests may assert that two runs of one scene are identical, but must not store exact positions as baselines, since those differ between machines.
+- The collision solve sums each particle's corrections in fixed point, so the sum does not depend on the order its neighbours are visited in (spec #9, decided on the prototype in #14, which measured no cost for it). Each bin's particles are also kept in particle id order and visited in a fixed order; that ordering is now redundant for determinism and may be dropped if the benchmark shows it is costly.
 - Raising the substep rate changes the simulation's results. That is deliberate: it is a quality setting, not a performance knob to vary per frame.

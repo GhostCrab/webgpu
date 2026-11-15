@@ -44,6 +44,19 @@ The furthest a particle may move in one substep: the smallest particle's radius.
 **Substep rate**:
 The number of substeps per second of simulated time. Raising it makes the simulation more accurate and changes its results.
 
+**Impact**:
+Two particles, or a particle and the boundary circle, in contact and closing.
+
+**Restitution**:
+The fraction of the closing speed along the contact that an impact gives back as parting speed. Particle impacts and the boundary circle each have their own.
+_Avoid_: Bounciness, elasticity
+
+**Damping**:
+The fraction of speed along the contact surface lost in an impact. Particle impacts and the boundary circle each have their own.
+
+**Relaxation factor**:
+The factor the collision solve scales each particle's averaged correction by.
+
 **Boundary circle**:
 The circle particles are kept inside.
 _Avoid_: Constraint, bounds, wall

@@ -11,6 +11,7 @@ import {
   PIPELINES,
   RADIUS,
   runStats,
+  mulberry32,
   seededScatter,
   SUBSTEP_RATE
 } from './sim-harness';
@@ -269,6 +270,47 @@ describe('the boundary circle', () => {
   });
 });
 
+describe('two overlapping particles', () => {
+  const pair = [
+    { x: -1, y: 0 },
+    { x: 1, y: 0 }
+  ];
+
+  test('are pushed apart symmetrically when collision is on', async () => {
+    const sim = await createSim(pair);
+    sim.step(FRAME);
+    const [a, b] = await sim.read();
+    expect(b.x - a.x).toBeGreaterThanOrEqual(2 * RADIUS);
+    expect(a.x + b.x).toBeCloseTo(0, 4);
+    // Collision only acts along the line between them; both still fall alike.
+    expect(a.y).toBeCloseTo(ONE_FRAME_DROP, 5);
+    expect(b.y).toBeCloseTo(ONE_FRAME_DROP, 5);
+  });
+
+  test('separate along a fixed direction, and stay finite, when exactly coincident', async () => {
+    const sim = await createSim([
+      { x: 10, y: 0 },
+      { x: 10, y: 0 }
+    ]);
+    sim.step(FRAME);
+    const [a, b] = await sim.read();
+    for (const p of [a, b]) {
+      expect(Number.isFinite(p.x + p.y + p.vx + p.vy)).toBe(true);
+    }
+    expect(Math.abs(b.x - a.x)).toBeGreaterThan(RADIUS);
+    expect(a.x + b.x).toBeCloseTo(20, 4);
+    expect(a.y).toBeCloseTo(b.y, 5);
+  });
+
+  test('pass through each other when collision is off', async () => {
+    const sim = await createSim(pair);
+    sim.step(5 * FRAME, { collide: false });
+    const [a, b] = await sim.read();
+    expect(a.x).toBe(-1);
+    expect(b.x).toBe(1);
+    expect(a.y).toBe(b.y);
+  });
+});
 });
 
 describe.skipIf(!device)('only the new pipeline', () => {
@@ -311,46 +353,147 @@ describe.skipIf(!device)('only the new pipeline', () => {
   });
 });
 
-// Collisions exist only in the current pipeline so far.
-describe.skipIf(!device)('two overlapping particles', () => {
-  const pair = [
-    { x: -1, y: 0 },
-    { x: 1, y: 0 }
+// Collisions in the new pipeline: the Jacobi gather and the velocity update.
+describe.skipIf(!device)('collisions in the new pipeline', () => {
+  const createNewSim: typeof createAnySim = (particles, options) =>
+    createAnySim(particles, { pipeline: 'new', ...options });
+  const mass = (p: { radius: number }) => p.radius * p.radius;
+
+  // Two free particles on the x axis, closing head-on at 1200 units per
+  // second. Gravity acts on both alike, along y, so it leaves x alone.
+  const headOn = (left: number, right: number) => [
+    { x: -10, y: 0, vx: 600, radius: left },
+    { x: 10, y: 0, vx: -600, radius: right }
   ];
 
-  test('are pushed apart symmetrically when collision is on', async () => {
-    const sim = await createSim(pair);
-    sim.step(FRAME);
+  test.each([
+    [1.5, 1.5],
+    [1.5, 3],
+    [1, 4]
+  ])('conserve momentum in a head-on collision (radii %s and %s)', async (left, right) => {
+    const before = headOn(left, right);
+    const sim = await createNewSim(before);
+    sim.step(3 * FRAME);
     const [a, b] = await sim.read();
-    expect(b.x - a.x).toBeGreaterThanOrEqual(2 * RADIUS);
-    expect(a.x + b.x).toBeCloseTo(0, 4);
-    // Collision only acts along the line between them; both still fall alike.
-    expect(a.y).toBeCloseTo(ONE_FRAME_DROP, 5);
-    expect(b.y).toBeCloseTo(ONE_FRAME_DROP, 5);
+    // They have met and parted.
+    expect(b.vx - a.vx).toBeGreaterThan(0);
+    const momentum = (ps: { radius: number; vx: number }[]) =>
+      ps.reduce((sum, p) => sum + mass(p) * p.vx, 0);
+    const scale = mass(before[0]) * 600 + mass(before[1]) * 600;
+    expect(Math.abs(momentum([a, b]) - momentum(before)) / scale).toBeLessThan(1e-4);
+    // Collision acts along the line between them only.
+    expect(a.vy).toBeCloseTo(b.vy, 3);
   });
 
-  test('separate along a fixed direction, and stay finite, when exactly coincident', async () => {
-    const sim = await createSim([
-      { x: 10, y: 0 },
-      { x: 10, y: 0 }
+  test.each([0, 0.25, 0.5, 1])(
+    'a head-on collision keeps the fraction of relative speed the restitution states (%s)',
+    async (particleRestitution) => {
+      const sim = await createNewSim(headOn(1.5, 3));
+      sim.step(3 * FRAME, { particleRestitution });
+      const [a, b] = await sim.read();
+      expect((b.vx - a.vx) / 1200).toBeCloseTo(particleRestitution, 3);
+    }
+  );
+
+  test('a glancing collision loses the fraction of speed along the contact the damping states', async () => {
+    // Closing along x at 1 unit per substep and sliding past each other along
+    // y. They first overlap after 18 substeps, by then level with each other,
+    // so the contact is along x. Both fall alike, so gravity leaves their
+    // relative velocity alone.
+    const sim = await createNewSim([
+      { x: -10, y: -4.5, vx: 600, vy: 300 },
+      { x: 10, y: 4.5, vx: -600, vy: -300 }
+    ]);
+    sim.step(3 * FRAME, { particleRestitution: 0.5, particleDamping: 0.25 });
+    const [a, b] = await sim.read();
+    expect((b.vx - a.vx) / 1200).toBeCloseTo(0.5, 2);
+    expect((a.vy - b.vy) / 600).toBeCloseTo(0.75, 2);
+  });
+
+  test('two coincident particles of unequal radii separate and stay finite', async () => {
+    const sim = await createNewSim([
+      { x: 10, y: 0, radius: 1 },
+      { x: 10, y: 0, radius: 4 }
     ]);
     sim.step(FRAME);
     const [a, b] = await sim.read();
     for (const p of [a, b]) {
       expect(Number.isFinite(p.x + p.y + p.vx + p.vy)).toBe(true);
     }
-    expect(Math.abs(b.x - a.x)).toBeGreaterThan(RADIUS);
-    expect(a.x + b.x).toBeCloseTo(20, 4);
-    expect(a.y).toBeCloseTo(b.y, 5);
+    expect(Math.abs(b.x - a.x)).toBeGreaterThanOrEqual(5 - 1e-3);
+    // The smaller particle, with a sixteenth of the mass, moves the most.
+    expect(Math.abs(a.x - 10)).toBeGreaterThan(Math.abs(b.x - 10));
   });
 
-  test('pass through each other when collision is off', async () => {
-    const sim = await createSim(pair);
-    sim.step(5 * FRAME, { collide: false });
-    const [a, b] = await sim.read();
-    expect(a.x).toBe(-1);
-    expect(b.x).toBe(1);
-    expect(a.y).toBe(b.y);
+  // Settled piles at the app's substep rate of 2400 per second, after 5 s of
+  // simulated time. Runs are reproducible, so the ranges below are measured
+  // over four scatter seeds (1234, 1, 99, 7) and widened to several times
+  // their spread.
+  const PILE_RATE = 2400;
+  const SETTLE = 5 * PILE_RATE;
+
+  /** The app's scatter, with radii from 0.75 to 3: a ratio of 4. */
+  function mixedScatter(count: number, seed: number) {
+    const random = mulberry32(seed + 1);
+    return seededScatter(count, seed).map((p, i) => ({
+      ...p,
+      radius: i === 0 ? 0.75 : i === 1 ? 3 : 0.75 + 2.25 * random()
+    }));
+  }
+
+  async function settledPile(particles: { radius?: number }[]) {
+    const sim = await createNewSim(particles as Parameters<typeof createNewSim>[0]);
+    sim.step(SETTLE, { substepRate: PILE_RATE });
+    const settled = await sim.read();
+    const smallest = Math.min(...settled.map((p) => p.radius));
+    // Every particle inside the boundary circle, and none faster than the
+    // speed limit: the smallest radius per substep.
+    for (const p of settled) {
+      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(DEFAULT_CONSTRAIN_RADIUS - p.radius + 1e-3);
+      expect(Math.hypot(p.vx, p.vy)).toBeLessThanOrEqual(smallest * PILE_RATE * (1 + 1e-5));
+    }
+    return runStats(settled);
+  }
+
+  test('15,000 particles settle into a resting pile', async () => {
+    const stats = await settledPile(seededScatter(15000, 1234));
+    expect(stats.nonFinite).toBe(0);
+    // Piled at the bottom (+y). Measured: centreY 970.6 to 970.9.
+    expect(stats.centreY).toBeGreaterThan(967);
+    expect(stats.centreY).toBeLessThan(974);
+    // Measured: mean 0.082 to 0.087, max 0.59 to 0.62, 41,600 to 42,100 touching pairs.
+    expect(stats.meanOverlap).toBeLessThan(0.11);
+    expect(stats.maxOverlap).toBeLessThan(1.0);
+    expect(stats.overlapPairs).toBeGreaterThan(39000);
+    expect(stats.overlapPairs).toBeLessThan(45000);
+    // Measured: 16 to 52 units per second.
+    expect(stats.meanSpeed).toBeLessThan(150);
+  });
+
+  test('particles with radii spanning a ratio of 4 settle into a resting pile', async () => {
+    const stats = await settledPile(mixedScatter(8000, 1234));
+    expect(stats.nonFinite).toBe(0);
+    // Measured: centreY 971.0 to 972.2.
+    expect(stats.centreY).toBeGreaterThan(968);
+    expect(stats.centreY).toBeLessThan(976);
+    // Measured: mean 0.080 to 0.084, max 0.65 to 0.88, 17,700 to 17,900 touching pairs.
+    expect(stats.meanOverlap).toBeLessThan(0.11);
+    expect(stats.maxOverlap).toBeLessThan(1.5);
+    expect(stats.overlapPairs).toBeGreaterThan(16000);
+    expect(stats.overlapPairs).toBeLessThan(19500);
+    // Measured: 50 to 58 units per second.
+    expect(stats.meanSpeed).toBeLessThan(150);
+  });
+
+  test('a multi-particle scene run twice gives identical particles', async () => {
+    const run = async () => {
+      const sim = await createNewSim(mixedScatter(8000, 99));
+      sim.step(PILE_RATE, { substepRate: PILE_RATE });
+      return sim.read();
+    };
+    const first = await run();
+    const second = await run();
+    expect(second).toEqual(first);
   });
 });
 

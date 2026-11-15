@@ -11,3 +11,5 @@ Collisions are resolved per particle: each particle reads its neighbours from on
 
 - Corrections spread one particle per substep, so piles are softer per substep than under Gauss-Seidel. The substep rate and the relaxation factor are chosen by measuring residual overlap and leftover kinetic energy in a settled pile, not by eye.
 - Particle data is double-buffered.
+- The corrections are summed in fixed point before averaging, so the result is independent of the order neighbours are visited in (ADR-0001).
+- The defaults, relaxation factor 1.25 at 2400 substeps per second, were chosen from the prototype's measurements (#14): 1.25 was the only factor stable at every substep rate measured, and 2400 per second matches the residual overlap of the earlier solver at 1200.

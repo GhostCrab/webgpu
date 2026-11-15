@@ -6,8 +6,12 @@ export interface ClockTick {
   wanted: number;
 }
 
-/** The substep rate the app starts with: 20 substeps per 60 Hz frame. */
-export const DEFAULT_SUBSTEP_RATE = 1200;
+/**
+ * The substep rate the app starts with: 40 substeps per 60 Hz frame. The new
+ * pipeline's collision solve needs twice the 1200 per second the current
+ * pipeline used to leave a pile as little overlap (#14).
+ */
+export const DEFAULT_SUBSTEP_RATE = 2400;
 
 /** The most simulated time one frame may cover, in seconds. */
 export const MAX_FRAME_TIME = 1 / 60;

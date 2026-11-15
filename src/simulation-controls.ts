@@ -1,4 +1,5 @@
 import { DEFAULT_SUBSTEP_RATE } from './clock';
+import { DEFAULT_COLLISION_SETTINGS } from './verlet/collision';
 import type { SimulationInput } from './verlet/verlet';
 
 /** Which way a held mouse button drives the click force. */
@@ -23,6 +24,12 @@ export class SimulationControls {
   impulse = 2000;
   /** Substeps per second of simulated time: the simulation's accuracy. */
   substepRate = DEFAULT_SUBSTEP_RATE;
+  /** Scales each particle's averaged collision correction (new pipeline). */
+  relaxation = DEFAULT_COLLISION_SETTINGS.relaxation;
+  /** Fraction of relative normal speed kept when two particles collide (new pipeline). */
+  particleRestitution = DEFAULT_COLLISION_SETTINGS.particleRestitution;
+  /** Fraction of relative speed along the contact lost when two particles collide (new pipeline). */
+  particleDamping = DEFAULT_COLLISION_SETTINGS.particleDamping;
 
   private pointer: [number, number] = [0, 0];
   private held: Record<ClickButton, boolean> = { attract: false, repel: false };
@@ -79,7 +86,10 @@ export class SimulationControls {
       constrainRadius: this.constrainRadius,
       classicConstrain: this.classicConstrain,
       collide: this.collide,
-      substepRate: this.substepRate
+      substepRate: this.substepRate,
+      relaxation: this.relaxation,
+      particleRestitution: this.particleRestitution,
+      particleDamping: this.particleDamping
     };
   }
 }

@@ -6,6 +6,7 @@ import { afterEach } from 'vitest';
 import { readBuffer } from '../src/read-buffer';
 import { SimulationTarget } from '../src/simulation-target';
 import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
+import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
 import { BinGridContents, PipelineName, scatter, Verlet } from '../src/verlet/verlet';
 
 export type { BinGridContents };
@@ -48,6 +49,10 @@ export interface SimInput {
   collide?: boolean;
   /** Substeps per second of simulated time. Defaults to SUBSTEP_RATE. */
   substepRate?: number;
+  /** The new pipeline's collision settings. Each defaults to the app's. */
+  relaxation?: number;
+  particleRestitution?: number;
+  particleDamping?: number;
 }
 
 export interface Sim {
@@ -163,6 +168,7 @@ export async function createSim(
         target: target.drawTarget,
         pipeline: options.pipeline,
         minBinSize: options.minBinSize,
+        substepRate: SUBSTEP_RATE,
         seed: () =>
           particles.map((p) => ({
             x: p.x,
@@ -205,7 +211,11 @@ export async function createSim(
             constrainCenter: input.constrainCenter,
             classicConstrain: input.classicConstrain ?? false,
             collide: input.collide ?? true,
-            substepRate: input.substepRate ?? SUBSTEP_RATE
+            substepRate: input.substepRate ?? SUBSTEP_RATE,
+            relaxation: input.relaxation ?? DEFAULT_COLLISION_SETTINGS.relaxation,
+            particleRestitution:
+              input.particleRestitution ?? DEFAULT_COLLISION_SETTINGS.particleRestitution,
+            particleDamping: input.particleDamping ?? DEFAULT_COLLISION_SETTINGS.particleDamping
           });
           device.queue.submit([encoder.finish()]);
         });

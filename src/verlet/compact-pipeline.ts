@@ -10,14 +10,18 @@ import {
 import type { Pipeline, PipelineOptions } from './pipeline';
 import { computeShaderSource } from './shader-source';
 import type { StageTimer } from './verlet-bin-computer';
+import collideShaderCode from './shaders/compact-collide.wgsl';
 import constrainShaderCode from './shaders/compact-constrain.wgsl';
 import integrateShaderCode from './shaders/compact-integrate.wgsl';
+import velocityShaderCode from './shaders/compact-velocity.wgsl';
 import vertexShader from './shaders/compact-renderer.wgsl';
 import { VerletRenderer } from './verlet-renderer';
 
 const shaders = {
   integrate: integrateShaderCode,
-  constrain: constrainShaderCode
+  collide: collideShaderCode,
+  constrain: constrainShaderCode,
+  velocity: velocityShaderCode
 };
 
 type Stage = keyof typeof shaders;
@@ -39,7 +43,8 @@ function largestRadius(particles: Particle[]): number {
  * The new pipeline (spec #9), being built beside the current one: the compact
  * particle with an explicit velocity, and its colour in a buffer of its own.
  * Every substep builds the bin grid, which leaves the particles in bin order in
- * the other of two particle buffers. It has no collisions yet.
+ * the other of two particle buffers, then the collision solve writes them
+ * back to the first.
  */
 export class CompactPipeline implements Pipeline {
   private device: GPUDevice;
@@ -53,6 +58,11 @@ export class CompactPipeline implements Pipeline {
   private current: 0 | 1 = 0;
   /** One colour per particle, at its particle id. Only drawing reads it. */
   private colorBuffer: GPUBuffer;
+  /**
+   * Per particle, at its place in the buffer holding the particles: the change
+   * of velocity the collision solve found its impacts call for.
+   */
+  private impactBuffer: GPUBuffer;
   private binGrid: BinGrid;
   private pipelines: Record<Stage, GPUComputePipeline>;
   private paramsGroup: GPUBindGroup;
@@ -79,6 +89,10 @@ export class CompactPipeline implements Pipeline {
       size: colorData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
+    this.impactBuffer = device.createBuffer({
+      size: Math.max(this.particleCount * 8, 8),
+      usage: GPUBufferUsage.STORAGE
+    });
     device.queue.writeBuffer(this.particleBuffers[0], 0, particleData);
     device.queue.writeBuffer(this.colorBuffer, 0, colorData);
 
@@ -89,7 +103,7 @@ export class CompactPipeline implements Pipeline {
         entries: [{ binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }]
       });
       const particlesLayout = device.createBindGroupLayout({
-        entries: [0, 1].map((binding) => ({
+        entries: [0, 1, 2].map((binding) => ({
           binding,
           visibility: GPUShaderStage.COMPUTE,
           buffer: { type: 'storage' as const }
@@ -129,7 +143,8 @@ export class CompactPipeline implements Pipeline {
           layout: particlesLayout,
           entries: [
             { binding: 0, resource: { buffer: from } },
-            { binding: 1, resource: { buffer: to } }
+            { binding: 1, resource: { buffer: to } },
+            { binding: 2, resource: { buffer: this.impactBuffer } }
           ]
         });
       const [a, b] = this.particleBuffers;
@@ -146,6 +161,7 @@ export class CompactPipeline implements Pipeline {
       // Nothing outside holds a reference yet, so release what was created.
       this.particleBuffers.forEach((buffer) => buffer.destroy());
       this.colorBuffer.destroy();
+      this.impactBuffer.destroy();
       this.binGrid?.destroy();
       throw error;
     }
@@ -166,16 +182,17 @@ export class CompactPipeline implements Pipeline {
   /**
    * Encodes one substep: a single compute pass, or with a timer one pass per
    * stage. The stages run in the order spec #9 fixes: integrate, build the bin
-   * grid, solve collisions (#17), the boundary, then the velocity update
-   * (#17). The new pipeline has no collisions yet, so `collide` has no effect.
+   * grid, solve collisions, the boundary, then the velocity update. With
+   * `collide` off the solve and the velocity update are skipped; the bin grid
+   * is still built.
    */
-  encodeSubstep(encoder: GPUCommandEncoder, _collide: boolean, timer?: StageTimer) {
+  encodeSubstep(encoder: GPUCommandEncoder, collide: boolean, timer?: StageTimer) {
     this.encodeStages(encoder, [
       this.particleStage('integrate'),
       ...this.binGridStages(),
-      // The collision solve (#17) goes here: it reads the particles in bin
-      // order, with the bin grid's bind group giving each bin's run.
-      this.particleStage('constrain')
+      ...(collide ? [this.solveStage()] : []),
+      this.particleStage('constrain'),
+      ...(collide ? [this.particleStage('velocity')] : [])
     ], timer);
   }
 
@@ -229,6 +246,21 @@ export class CompactPipeline implements Pipeline {
     ];
   }
 
+  /**
+   * The collision solve. It reads the particles in bin order and writes them
+   * to the other buffer, so it swaps which buffer holds them as it is encoded.
+   */
+  private solveStage(): [string, (pass: GPUComputePassEncoder) => void] {
+    const [name, solve] = this.particleStage('collide');
+    return [
+      name,
+      (pass) => {
+        solve(pass);
+        this.current = this.current === 0 ? 1 : 0;
+      }
+    ];
+  }
+
   private encodeStages(
     encoder: GPUCommandEncoder,
     stages: [string, (pass: GPUComputePassEncoder) => void][],
@@ -262,6 +294,7 @@ export class CompactPipeline implements Pipeline {
   destroy() {
     this.particleBuffers.forEach((buffer) => buffer.destroy());
     this.colorBuffer.destroy();
+    this.impactBuffer.destroy();
     this.binGrid.destroy();
     this.renderer.destroy();
   }

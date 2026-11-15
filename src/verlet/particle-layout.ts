@@ -138,6 +138,10 @@ export interface ParamsValues {
   speedLimit: number;
   /** x, y, and the click force in z. */
   clickPoint: [number, number, number];
+  /** The new pipeline's collision settings. */
+  relaxation: number;
+  particleRestitution: number;
+  particleDamping: number;
 }
 
 /** Lays out the contents of the simulation params uniform. */
