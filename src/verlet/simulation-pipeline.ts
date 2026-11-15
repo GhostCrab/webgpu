@@ -1,7 +1,14 @@
 import { readBuffer } from '../read-buffer';
 import { BinGrid, BinGridSize } from './bin-grid';
 import type { DrawTarget } from '../simulation-target';
-import { packParticles, Particle, unpackParticles, unpackParticlesInPlace } from './particle-layout';
+import {
+  packParticles,
+  Particle,
+  PARTICLE_BYTES,
+  COLOR_BYTES,
+  unpackParticles,
+  unpackParticlesInPlace
+} from './particle-layout';
 import { computeShaderSource } from './shader-source';
 import collideShaderCode from './shaders/collide.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
@@ -30,6 +37,11 @@ export interface StageTimer {
 export interface SimulationPipelineOptions {
   /** The starting particles; their ids run from 0 in the order given. */
   particles: Particle[];
+  /**
+   * The most particles the pipeline holds. Its per-particle buffers are
+   * allocated for this many, once.
+   */
+  capacity: number;
   /** Side of the square region of simulation space that particles may occupy. */
   bounds: number;
   /**
@@ -45,6 +57,10 @@ export interface SimulationPipelineOptions {
   target: DrawTarget;
 }
 
+function largestRadiusOf(particles: Particle[]): number {
+  return particles.reduce((largest, p) => Math.max(largest, p.radius), 0);
+}
+
 /** What a bin grid build left behind, for tests of the build on its own. */
 export interface BinGridContents {
   grid: BinGridSize;
@@ -54,9 +70,6 @@ export interface BinGridContents {
   binStarts: Uint32Array;
 }
 
-function largestRadius(particles: Particle[]): number {
-  return particles.reduce((largest, p) => Math.max(largest, p.radius), 0);
-}
 
 /**
  * Owns the particles on the GPU and the passes that advance and draw them.
@@ -67,7 +80,10 @@ function largestRadius(particles: Particle[]): number {
  */
 export class SimulationPipeline {
   private device: GPUDevice;
+  /** The live particles, at the start of the buffer holding them. */
   private particleCount: number;
+  /** The largest radius among the live particles, which sizes the bins. */
+  private largestRadius = 0;
   /**
    * Two particle buffers: each build reads the particles from one and writes
    * them in bin order to the other, which then holds the particles.
@@ -92,11 +108,12 @@ export class SimulationPipeline {
   constructor(device: GPUDevice, options: SimulationPipelineOptions) {
     this.device = device;
     this.particleCount = options.particles.length;
+    const { capacity } = options;
 
     const { particleData, colorData } = packParticles(options.particles);
     const particleBuffer = () =>
       device.createBuffer({
-        size: particleData.byteLength,
+        size: capacity * PARTICLE_BYTES,
         usage:
           GPUBufferUsage.STORAGE |
           GPUBufferUsage.VERTEX |
@@ -105,11 +122,11 @@ export class SimulationPipeline {
       });
     this.particleBuffers = [particleBuffer(), particleBuffer()];
     this.colorBuffer = device.createBuffer({
-      size: colorData.byteLength,
+      size: capacity * COLOR_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
     this.impactBuffer = device.createBuffer({
-      size: Math.max(this.particleCount * 8, 8),
+      size: capacity * 8,
       usage: GPUBufferUsage.STORAGE
     });
     device.queue.writeBuffer(this.particleBuffers[0], 0, particleData);
@@ -129,11 +146,13 @@ export class SimulationPipeline {
         }))
       });
 
+      this.largestRadius = largestRadiusOf(options.particles);
       this.binGrid = new BinGrid(device, {
         bounds: options.bounds,
         minBinSize: options.minBinSize,
-        largestRadius: largestRadius(options.particles),
+        largestRadius: this.largestRadius,
         particleCount: this.particleCount,
+        capacity,
         paramsLayout,
         particlesLayout
       });
@@ -191,13 +210,37 @@ export class SimulationPipeline {
 
   /**
    * Replaces every particle, and sizes the bins for the largest radius among
-   * them. Particle ids must run from 0 in the order given.
+   * them. Particle ids must run from 0 in the order given, and there must be
+   * no more particles than the capacity.
    */
   write(particles: Particle[]) {
     const { particleData, colorData } = packParticles(particles);
     this.device.queue.writeBuffer(this.particleBuffer, 0, particleData);
     this.device.queue.writeBuffer(this.colorBuffer, 0, colorData);
-    this.binGrid.resize(largestRadius(particles));
+    this.particleCount = particles.length;
+    this.largestRadius = largestRadiusOf(particles);
+    this.binGrid.resize(this.largestRadius, this.particleCount);
+  }
+
+  /**
+   * Adds particles after the live ones, and sizes the bins for the largest
+   * radius in use. Their ids must run on from `firstId`, in any order, and the
+   * live particles must still fit the capacity. It takes effect at once, so
+   * call it between submitted encoders, never between encoding a substep and
+   * submitting it.
+   */
+  append(particles: Particle[], firstId: number) {
+    if (particles.length === 0) return;
+    const { particleData, colorData } = packParticles(particles, firstId);
+    this.device.queue.writeBuffer(
+      this.particleBuffer,
+      this.particleCount * PARTICLE_BYTES,
+      particleData
+    );
+    this.device.queue.writeBuffer(this.colorBuffer, firstId * COLOR_BYTES, colorData);
+    this.particleCount += particles.length;
+    this.largestRadius = Math.max(this.largestRadius, largestRadiusOf(particles));
+    this.binGrid.resize(this.largestRadius, this.particleCount);
   }
 
   /**
@@ -227,7 +270,7 @@ export class SimulationPipeline {
   async readBinGrid(): Promise<BinGridContents> {
     const grid = this.binGrid.size;
     const [particles, colors, binStarts] = await Promise.all([
-      readBuffer(this.device, this.particleBuffer),
+      readBuffer(this.device, this.particleBuffer, this.particleCount * PARTICLE_BYTES),
       readBuffer(this.device, this.colorBuffer),
       this.binGrid.readStarts()
     ]);
@@ -304,7 +347,7 @@ export class SimulationPipeline {
   /** Reads the particles back, ordered by particle id. */
   async read(): Promise<Particle[]> {
     const [particles, colors] = await Promise.all([
-      readBuffer(this.device, this.particleBuffer),
+      readBuffer(this.device, this.particleBuffer, this.particleCount * PARTICLE_BYTES),
       readBuffer(this.device, this.colorBuffer)
     ]);
     return unpackParticles(particles, colors);

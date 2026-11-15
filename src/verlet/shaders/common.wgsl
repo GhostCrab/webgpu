@@ -45,6 +45,9 @@ struct BinGridParams {
   width: u32,
   height: u32,
   binCount: u32,
+  // The live particles: the first particleCount of the particle buffer. The
+  // rest of the buffer, up to capacity, is unused.
+  particleCount: u32,
 }
 
 @group(0) @binding(1) var<uniform> params: Params;

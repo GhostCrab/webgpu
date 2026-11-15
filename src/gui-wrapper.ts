@@ -1,5 +1,9 @@
 import type { ClockTick } from './clock';
 import { SimulationControls } from './simulation-controls';
+import { MAX_RADIUS_RATIO } from './verlet/capacity';
+
+/** The radius the default seed gives every particle, and so the smallest to spawn. */
+const SEED_RADIUS = 1.5;
 
 // lil-gui is loaded via CDN in index.html, so it has no type definitions here.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20,23 +24,29 @@ export default class GuiWrapper {
   gui: any;
   private stats: {
     fps: string | number;
-    particleCount: number;
+    particleCount: string;
     substeps: string;
     simResolution: string;
   };
 
-  constructor(controls: SimulationControls, stats: GuiStats, onReset: () => void) {
+  /** `onRestart` makes a new simulation, at the capacity now set. */
+  constructor(
+    controls: SimulationControls,
+    stats: GuiStats,
+    onReset: () => void,
+    onRestart: () => void
+  ) {
     this.gui = new lil.GUI({ title: 'Debug Controls' });
 
     this.stats = {
       fps: 0,
-      particleCount: stats.particleCount,
+      particleCount: `${stats.particleCount} / ${controls.capacity}`,
       substeps: '0 / 0',
       simResolution: `${stats.simWidth}x${stats.simHeight}`
     };
     const statsFolder = this.gui.addFolder('Stats');
     statsFolder.add(this.stats, 'fps').disable().listen();
-    statsFolder.add(this.stats, 'particleCount').disable();
+    statsFolder.add(this.stats, 'particleCount').name('Particles / capacity').disable().listen();
     statsFolder.add(this.stats, 'substeps').name('Substeps run / wanted').disable().listen();
     statsFolder.add(this.stats, 'simResolution').name('Sim Resolution').disable();
 
@@ -56,11 +66,28 @@ export default class GuiWrapper {
     parameters.add(controls, 'particleRestitution', 0, 1, 0.05).name('Particle Restitution');
     parameters.add(controls, 'particleDamping', 0, 1, 0.05).name('Particle Damping');
 
+    const spawn = this.gui.addFolder('Spawn (hold S)');
+    spawn.add(controls, 'spawnRate', 0, 20000, 60).name('Particles per Second');
+    spawn
+      .add(controls, 'spawnRadius', SEED_RADIUS, SEED_RADIUS * MAX_RADIUS_RATIO, 0.25)
+      .name('Radius');
+    spawn.addColor(controls, 'spawnColor').name('Colour');
+    spawn
+      .add(controls, 'capacity', 1000, 2000000, 1000)
+      .name('Capacity (restarts)')
+      .onFinishChange(onRestart);
+
     this.gui.add({ reset: onReset }, 'reset').name('Reset (R)');
 
     statsFolder.open();
     simulation.open();
     parameters.open();
+    spawn.open();
+  }
+
+  /** Shows the live particles against the capacity. */
+  updateParticles(count: number, capacity: number) {
+    this.stats.particleCount = `${count} / ${capacity}`;
   }
 
   /** Shows one frame's rate and the substeps it ran against those it wanted. */

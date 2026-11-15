@@ -66,6 +66,7 @@ async function measure(device: GPUDevice, count: number, timestamps: boolean): P
     // Nothing is drawn, but the simulation is built with a draw target.
     projection: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
     target: { format: 'bgra8unorm', sampleCount: 1, depthStencilFormat: 'depth24plus' },
+    capacity: count,
     seed: () =>
       scatter({
         count,

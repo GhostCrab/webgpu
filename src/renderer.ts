@@ -89,11 +89,7 @@ export default class Renderer {
     this.resizeCanvas();
     window.addEventListener('resize', () => this.resizeCanvas());
 
-    this.verlet = new Verlet(this.device, {
-      bounds: SIMULATION_HEIGHT,
-      projection: this.target.projection,
-      target: this.target.drawTarget
-    });
+    this.verlet = this.createSimulation();
 
     this.tickInputs = bindInputs(this.controls, {
       toSimulation: (pageX, pageY) =>
@@ -111,8 +107,25 @@ export default class Renderer {
         simWidth: SIMULATION_WIDTH,
         simHeight: SIMULATION_HEIGHT
       },
-      () => this.verlet.reset()
+      () => this.verlet.reset(),
+      () => this.restart()
     );
+  }
+
+  /** A new simulation, at the capacity the controls hold. */
+  createSimulation(): Verlet {
+    return new Verlet(this.device, {
+      bounds: SIMULATION_HEIGHT,
+      projection: this.target.projection,
+      target: this.target.drawTarget,
+      capacity: Math.round(this.controls.capacity)
+    });
+  }
+
+  /** Replaces the simulation with a fresh one, as on a change of capacity. */
+  restart() {
+    this.verlet.destroy();
+    this.verlet = this.createSimulation();
   }
 
   // ↙️ Match the canvas backing store to its displayed size
@@ -132,6 +145,8 @@ export default class Renderer {
       lastFrame = now;
 
       const input = this.controls.frameInput();
+      // Spawned particles are written before this frame's substeps are encoded.
+      this.verlet.spawn(this.controls.frameSpawn(elapsed));
       const commandEncoder = this.device.createCommandEncoder();
 
       // While paused the clock does not run, so no time is owed on resuming.
@@ -140,6 +155,7 @@ export default class Renderer {
         : this.clock.advance(elapsed, input.substepRate);
       this.verlet.step(commandEncoder, tick.substeps, input);
       this.gui.updateFrame(1 / elapsed, tick);
+      this.gui.updateParticles(this.verlet.particleCount, this.verlet.capacity);
 
       this.target.render(
         commandEncoder,

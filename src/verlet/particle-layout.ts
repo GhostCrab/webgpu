@@ -95,11 +95,12 @@ const toByte = (channel: number) => Math.round(Math.min(Math.max(channel, 0), 1)
 
 /**
  * Lays particles out as the contents of the particle buffer,
- * in the order given, and their colours as the contents of its colour buffer,
- * where a particle's colour sits at its particle id. Ids must run from 0 to
- * one less than the number of particles.
+ * in the order given, and their colours as the contents of its colour buffer
+ * from particle id `firstId` on, where a particle's colour sits at its
+ * particle id. Ids must run from `firstId` to `firstId` plus one less than the
+ * number of particles, in any order.
  */
-export function packParticles(particles: Particle[]): {
+export function packParticles(particles: Particle[], firstId = 0): {
   particleData: Float32Array<ArrayBuffer>;
   colorData: Uint32Array<ArrayBuffer>;
 } {
@@ -116,7 +117,7 @@ export function packParticles(particles: Particle[]): {
     ids[o + ID] = p.id;
     // Red in the low byte, as the shader's unpack4x8unorm reads it.
     const [r, g, b] = p.rgb;
-    colorData[p.id] = (toByte(r) | (toByte(g) << 8) | (toByte(b) << 16) | (255 << 24)) >>> 0;
+    colorData[p.id - firstId] = (toByte(r) | (toByte(g) << 8) | (toByte(b) << 16) | (255 << 24)) >>> 0;
   });
   return { particleData, colorData };
 }
@@ -169,6 +170,8 @@ export function packBinGridParams(values: {
   width: number;
   height: number;
   binCount: number;
+  /** The live particles, at the start of the particle buffer. */
+  particleCount: number;
 }): ArrayBuffer {
   const view = makeStructuredView(structs.BinGridParams);
   view.set(values);

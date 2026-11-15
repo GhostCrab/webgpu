@@ -104,6 +104,10 @@ describe('settings', () => {
     expect(controls().paused).toBe(false);
   });
 
+  test('start with a capacity of 50,000 particles', () => {
+    expect(controls().capacity).toBe(50000);
+  });
+
   test('start at 2400 substeps per second, which the user can change', () => {
     const c = controls();
     expect(c.frameInput().substepRate).toBe(2400);
@@ -138,6 +142,78 @@ describe('settings', () => {
       classicConstrain: true,
       constrainRadius: 400
     });
+  });
+});
+
+describe('spawn', () => {
+  // 600 particles per second, so 10 in a 60 Hz frame.
+  const FRAME = 1 / 60;
+
+  test('spawns nothing until the spawn key is held', () => {
+    const c = controls();
+    c.movePointer(50, 60);
+    expect(c.frameSpawn(FRAME)).toEqual([]);
+  });
+
+  test('while held, spawns at the spawn rate, at rest near the pointer, with the spawn radius and colour', () => {
+    const c = controls();
+    c.spawnRate = 600;
+    c.spawnRadius = 3;
+    c.spawnColor = [1, 0.5, 0];
+    c.movePointer(50, 60);
+    c.startSpawning();
+    const spawned = c.frameSpawn(FRAME);
+    expect(spawned).toHaveLength(10);
+    for (const p of spawned) {
+      expect(Math.hypot(p.x - 50, p.y - 60)).toBeLessThanOrEqual(10 * 3);
+      expect(p).toMatchObject({ vx: 0, vy: 0, radius: 3, rgb: [1, 0.5, 0] });
+    }
+  });
+
+  test('spreads the particles it spawns', () => {
+    const c = controls();
+    c.startSpawning();
+    const spawned = c.frameSpawn(FRAME);
+    expect(new Set(spawned.map((p) => `${p.x},${p.y}`)).size).toBe(spawned.length);
+  });
+
+  test('carries part of a particle between frames, so a second of 144 Hz frames spawns the rate', () => {
+    const c = controls();
+    c.spawnRate = 100;
+    c.startSpawning();
+    let total = 0;
+    for (let frame = 0; frame < 144; frame++) total += c.frameSpawn(1 / 144).length;
+    expect(total).toBe(100);
+  });
+
+  test('a stalled frame spawns no more than a 60 Hz frame does', () => {
+    const c = controls();
+    c.spawnRate = 600;
+    c.startSpawning();
+    expect(c.frameSpawn(2)).toHaveLength(10);
+  });
+
+  test('stops when the spawn key is released', () => {
+    const c = controls();
+    c.startSpawning();
+    c.frameSpawn(FRAME);
+    c.stopSpawning();
+    expect(c.frameSpawn(FRAME)).toEqual([]);
+  });
+
+  test('spawns nothing while paused', () => {
+    const c = controls();
+    c.startSpawning();
+    c.toggle('paused');
+    expect(c.frameSpawn(FRAME)).toEqual([]);
+  });
+
+  test('leaves the click force alone', () => {
+    const c = controls();
+    c.movePointer(50, 60);
+    c.startSpawning();
+    c.frameSpawn(FRAME);
+    expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
   });
 });
 

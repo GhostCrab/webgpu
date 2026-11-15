@@ -35,7 +35,7 @@ fn clearBins(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn countBins(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= arrayLength(&particles)) {
+  if (i >= binGrid.particleCount) {
     return;
   }
   binSlots[i] = atomicAdd(&binStarts[binIndex(particles[i].pos)], 1u);
@@ -44,7 +44,7 @@ fn countBins(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn writeKeys(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= arrayLength(&particles)) {
+  if (i >= binGrid.particleCount) {
     return;
   }
   let start = atomicLoad(&binStarts[binIndex(particles[i].pos)]);
@@ -54,7 +54,7 @@ fn writeKeys(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn placeParticles(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= arrayLength(&particles)) {
+  if (i >= binGrid.particleCount) {
     return;
   }
   let p = particles[i];

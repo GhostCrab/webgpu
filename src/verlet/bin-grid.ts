@@ -76,7 +76,10 @@ export interface BinGridOptions {
   minBinSize: number;
   /** The largest radius among the starting particles. */
   largestRadius: number;
+  /** The number of starting particles. */
   particleCount: number;
+  /** The most particles the grid can hold; its per-particle buffers are allocated for it. */
+  capacity: number;
   /** Bind group layout 0: the simulation params uniform. */
   paramsLayout: GPUBindGroupLayout;
   /** Bind group layout 2: the particles (binding 0) and the buffer they are sorted into (1). */
@@ -107,7 +110,8 @@ export class BinGrid {
   private device: GPUDevice;
   private bounds: number;
   private minBinSize: number;
-  private particleCount: number;
+  /** The live particles, which a build reads. */
+  private particleCount = 0;
   private grid: BinGridSize;
 
   private paramsBuffer: GPUBuffer;
@@ -124,7 +128,7 @@ export class BinGrid {
   private levels: number[] = [];
 
   constructor(device: GPUDevice, options: BinGridOptions) {
-    const { bounds, minBinSize, particleCount } = options;
+    const { bounds, minBinSize, capacity } = options;
     if (!(minBinSize > 0) || !Number.isFinite(minBinSize)) {
       throw new Error(`the smallest bin size must be a positive number; got ${minBinSize}`);
     }
@@ -139,7 +143,6 @@ export class BinGrid {
     this.device = device;
     this.bounds = bounds;
     this.minBinSize = minBinSize;
-    this.particleCount = particleCount;
 
     const storage = (size: number, usage = 0) =>
       device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | usage });
@@ -149,8 +152,8 @@ export class BinGrid {
     });
     // One more than the bins, for the end of the last bin's run.
     this.startsBuffer = storage((allocated.binCount + 1) * 4, GPUBufferUsage.COPY_SRC);
-    this.slotsBuffer = storage(particleCount * 4);
-    this.keysBuffer = storage(particleCount * 4);
+    this.slotsBuffer = storage(capacity * 4);
+    this.keysBuffer = storage(capacity * 4);
     this.blockSumsBuffer = storage(blockSumOffsets(scanLevels(allocated.binCount + 1)).bytes);
 
     try {
@@ -208,7 +211,7 @@ export class BinGrid {
     }
 
     this.grid = allocated;
-    this.resize(options.largestRadius);
+    this.resize(options.largestRadius, options.particleCount);
   }
 
   /** The grid's current size. */
@@ -216,10 +219,21 @@ export class BinGrid {
     return this.grid;
   }
 
-  /** Sizes the bins for the largest radius in use. */
-  resize(largestRadius: number) {
-    this.grid = sizeBinGrid({ bounds: this.bounds, largestRadius, minBinSize: this.minBinSize });
-    this.device.queue.writeBuffer(this.paramsBuffer, 0, packBinGridParams(this.grid));
+  /**
+   * Sizes the bins for the largest radius in use, and sets the number of live
+   * particles, which sit at the start of the particle buffer.
+   */
+  resize(largestRadius: number, particleCount: number) {
+    const grid = sizeBinGrid({ bounds: this.bounds, largestRadius, minBinSize: this.minBinSize });
+    const resized = grid.binCount !== this.grid.binCount || this.levels.length === 0;
+    this.grid = grid;
+    this.particleCount = particleCount;
+    this.device.queue.writeBuffer(
+      this.paramsBuffer,
+      0,
+      packBinGridParams({ ...this.grid, particleCount })
+    );
+    if (!resized) return;
 
     this.levels = scanLevels(this.grid.binCount + 1);
     const { offsets } = blockSumOffsets(this.levels);

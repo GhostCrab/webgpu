@@ -1,11 +1,19 @@
-/** Copies the contents of a GPU buffer (which must have COPY_SRC usage) back to the CPU. */
-export async function readBuffer(device: GPUDevice, source: GPUBuffer): Promise<ArrayBuffer> {
+/**
+ * Copies the contents of a GPU buffer (which must have COPY_SRC usage) back to
+ * the CPU: its first `size` bytes, a multiple of 4, or all of it.
+ */
+export async function readBuffer(
+  device: GPUDevice,
+  source: GPUBuffer,
+  size = source.size
+): Promise<ArrayBuffer> {
+  if (size === 0) return new ArrayBuffer(0);
   const staging = device.createBuffer({
-    size: source.size,
+    size,
     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
   });
   const encoder = device.createCommandEncoder();
-  encoder.copyBufferToBuffer(source, 0, staging, 0, source.size);
+  encoder.copyBufferToBuffer(source, 0, staging, 0, size);
   device.queue.submit([encoder.finish()]);
 
   await staging.mapAsync(GPUMapMode.READ);

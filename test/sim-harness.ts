@@ -4,9 +4,9 @@ import { getDevice } from './gpu';
 import { afterEach } from 'vitest';
 
 import { SimulationTarget } from '../src/simulation-target';
-import { Particle } from '../src/verlet/particle-layout';
+import { Particle, SeedParticle } from '../src/verlet/particle-layout';
 import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
-import { BinGridContents, scatter, Verlet } from '../src/verlet/verlet';
+import { BinGridContents, DEFAULT_CAPACITY, scatter, Verlet } from '../src/verlet/verlet';
 
 export type { BinGridContents };
 
@@ -56,7 +56,13 @@ export interface SimInput {
 
 export interface Sim {
   device: GPUDevice;
-  count: number;
+  /** The number of live particles. */
+  readonly count: number;
+  /**
+   * Spawns particles, each with a particle id not used before, up to the
+   * simulation's capacity. Returns how many were added.
+   */
+  spawn(particles: TestParticle[]): number;
   /** Advances the simulation by a whole number of substeps. */
   step(substeps: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
@@ -108,6 +114,20 @@ afterEach(async () => {
 export interface SimOptions {
   /** The smallest bin size. Defaults to the largest particle's diameter. */
   minBinSize?: number;
+  /** The most particles the simulation holds. Defaults to the app's, or the seed's size if larger. */
+  capacity?: number;
+}
+
+/** A test particle as the simulation takes it, with the harness's defaults filled in. */
+function toSeedParticle(p: TestParticle): SeedParticle {
+  return {
+    x: p.x,
+    y: p.y,
+    vx: p.vx ?? 0,
+    vy: p.vy ?? 0,
+    radius: p.radius ?? RADIUS,
+    rgb: p.rgb ?? [1, 1, 1]
+  };
 }
 
 export async function createSim(
@@ -159,15 +179,8 @@ export async function createSim(
         projection: target.projection,
         target: target.drawTarget,
         minBinSize: options.minBinSize,
-        seed: () =>
-          particles.map((p) => ({
-            x: p.x,
-            y: p.y,
-            vx: p.vx ?? 0,
-            vy: p.vy ?? 0,
-            radius: p.radius ?? RADIUS,
-            rgb: p.rgb ?? [1, 1, 1]
-          }))
+        capacity: options.capacity ?? Math.max(particles.length, DEFAULT_CAPACITY),
+        seed: () => particles.map(toSeedParticle)
       });
       return { target, verlet };
     } catch (error) {
@@ -188,7 +201,13 @@ export async function createSim(
 
   return {
     device,
-    count: particles.length,
+    get count() {
+      return verlet.particleCount;
+    },
+
+    spawn(spawned) {
+      return checked(() => verlet.spawn(spawned.map(toSeedParticle)));
+    },
 
     step(substeps, input = {}) {
       for (let done = 0; done < substeps; done += SUBSTEPS_PER_SUBMIT) {

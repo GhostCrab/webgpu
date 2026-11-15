@@ -5,7 +5,7 @@
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= arrayLength(&particles)) {
+  if (i >= binGrid.particleCount) {
     return;
   }
 

@@ -1,9 +1,12 @@
 import type { DrawTarget } from '../simulation-target';
+import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO } from './capacity';
 import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
 import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
 import { BinGridContents, SimulationPipeline, StageTimer } from './simulation-pipeline';
 
 export type { BinGridContents, StageTimer } from './simulation-pipeline';
+
+export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO } from './capacity';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
@@ -128,10 +131,16 @@ export interface VerletOptions {
    */
   minBinSize?: number;
   /**
+   * The most particles the simulation holds at once, seeded and spawned. Its
+   * buffers are allocated for this many, once; to change it, make a new
+   * simulation. Defaults to DEFAULT_CAPACITY.
+   */
+  capacity?: number;
+  /**
    * Produces the starting particles, and is called again by reset(). It must
-   * return the same number of particles each time. Defaults to a random
-   * scatter of 15,000 particles of radius 1.5. Each particle's id is its
-   * index in what the seed returns.
+   * return no more particles than the capacity. Defaults to a random scatter
+   * of 15,000 particles of radius 1.5, or the capacity if smaller. Each
+   * particle's id is its index in what the seed returns.
    */
   seed?: () => SeedParticle[];
 }
@@ -141,13 +150,18 @@ export interface VerletOptions {
  * draws them.
  */
 export class Verlet {
-  readonly particleCount: number;
+  /** The most particles the simulation holds at once. */
+  readonly capacity: number;
 
   private device: GPUDevice;
   private bounds: number;
   private seed: () => SeedParticle[];
-  /** The furthest a particle may move in one substep: the smallest radius in use. */
-  private speedLimit: number;
+  /** The smallest and largest radius seeded or spawned since the last seeding. */
+  private radii: { smallest: number; largest: number };
+  /** The live particles. */
+  private liveCount: number;
+  /** The particle id the next spawned particle takes. */
+  private nextId: number;
   private totalTime = 0;
 
   private paramsBuffer: GPUBuffer;
@@ -156,18 +170,24 @@ export class Verlet {
   constructor(device: GPUDevice, options: VerletOptions) {
     this.device = device;
     this.bounds = options.bounds;
+    this.capacity = options.capacity ?? DEFAULT_CAPACITY;
     this.seed =
       options.seed ??
-      (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5 }));
+      (() =>
+        scatter({ count: Math.min(15000, this.capacity), bounds: this.bounds, radius: 1.5 }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);
     }
+    if (!Number.isInteger(this.capacity) || this.capacity < 1) {
+      throw new Error(`capacity must be a whole number, 1 or more; got ${this.capacity}`);
+    }
 
-    const particles = this.seed();
-    this.particleCount = particles.length;
+    const particles = this.seededParticles();
+    this.liveCount = particles.length;
+    this.nextId = particles.length;
     const radii = radiusRange(particles);
-    this.speedLimit = radii.smallest;
+    this.radii = radii;
 
     this.paramsBuffer = device.createBuffer({
       size: PARAMS_BYTES,
@@ -194,6 +214,7 @@ export class Verlet {
     try {
       this.pipeline = new SimulationPipeline(device, {
         particles: withIds(particles),
+        capacity: this.capacity,
         bounds: this.bounds,
         // A bin must be at least as wide as the largest particle.
         minBinSize: options.minBinSize ?? 2 * radii.largest,
@@ -258,17 +279,79 @@ export class Verlet {
     this.pipeline.draw(pass);
   }
 
-  /** Puts the particles back to a fresh starting state from the seed. */
+  /** The number of live particles. */
+  get particleCount(): number {
+    return this.liveCount;
+  }
+
+  /** The furthest a particle may move in one substep: the smallest radius in use. */
+  private get speedLimit(): number {
+    return this.radii.smallest;
+  }
+
+  /**
+   * Puts the particles back to a fresh starting state from the seed, removing
+   * every spawned particle. Particle ids start again from 0.
+   */
   reset() {
-    const particles = this.seed();
-    if (particles.length !== this.particleCount) {
-      throw new Error(
-        `seed returned ${particles.length} particles; expected ${this.particleCount}`
-      );
-    }
+    const particles = this.seededParticles();
     const radii = radiusRange(particles);
     this.pipeline.write(withIds(particles));
-    this.speedLimit = radii.smallest;
+    this.radii = radii;
+    this.liveCount = particles.length;
+    this.nextId = particles.length;
+  }
+
+  /**
+   * Adds particles while the simulation runs, each with a particle id not used
+   * before, until the simulation holds its capacity; the rest are dropped.
+   * Returns how many were added. The bins grow with the largest radius
+   * spawned.
+   *
+   * Every radius must be more than 0, and keep the largest radius in use at
+   * most MAX_RADIUS_RATIO times the smallest.
+   *
+   * It takes effect at once, so call it between submitted encoders, never
+   * between step() and submitting its encoder.
+   */
+  spawn(particles: SeedParticle[]): number {
+    const added = particles.slice(0, this.capacity - this.liveCount);
+    let { smallest, largest } = this.radii;
+    for (const p of added) {
+      if (!(p.radius > 0) || !Number.isFinite(p.radius)) {
+        throw new Error(`cannot spawn a particle with radius ${p.radius}; a radius must be more than 0`);
+      }
+      smallest = Math.min(smallest, p.radius);
+      largest = Math.max(largest, p.radius);
+      if (largest > MAX_RADIUS_RATIO * smallest) {
+        throw new Error(
+          `cannot spawn a particle with radius ${p.radius}: the radii in use would run from ` +
+            `${smallest} to ${largest}, more than ${MAX_RADIUS_RATIO} times apart`
+        );
+      }
+    }
+    if (added.length === 0) return 0;
+
+    const firstId = this.nextId;
+    this.pipeline.append(
+      added.map((p, i) => ({ ...p, id: firstId + i })),
+      firstId
+    );
+    this.liveCount += added.length;
+    this.nextId += added.length;
+    this.radii = { smallest, largest };
+    return added.length;
+  }
+
+  /** Calls the seed, and rejects more particles than the capacity. */
+  private seededParticles(): SeedParticle[] {
+    const particles = this.seed();
+    if (particles.length > this.capacity) {
+      throw new Error(
+        `seed returned ${particles.length} particles; the capacity is ${this.capacity}`
+      );
+    }
+    return particles;
   }
 
   /** Reads the current particles back from the GPU, ordered by particle id. */
