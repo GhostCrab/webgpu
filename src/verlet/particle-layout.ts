@@ -24,25 +24,36 @@ const BIN_LINK = offsetOf('binLink') / 4;
 export const PARTICLE_BYTES = particleStruct.size;
 const PARTICLE_WORDS = PARTICLE_BYTES / 4;
 
+/** One particle, as the simulation interface takes and returns it. */
 export interface Particle {
+  /** Identifies the particle for its whole life, wherever it sits in memory. */
+  id: number;
   x: number;
   y: number;
-  prevX: number;
-  prevY: number;
+  /** Velocity, in simulation units per second. */
+  vx: number;
+  vy: number;
   /** 0 disables the particle: it neither collides nor draws. */
   radius: number;
   rgb: [number, number, number];
 }
 
-/** Lays particles out as the contents of a particle buffer. */
-export function packParticles(particles: Particle[]): Float32Array<ArrayBuffer> {
+/** A particle before the simulation has given it a particle id. */
+export type SeedParticle = Omit<Particle, 'id'>;
+
+/**
+ * Lays particles out as the contents of the current pipeline's particle
+ * buffer. That pipeline holds velocity as the previous position: one substep
+ * at `substepRate` behind the position. A particle's id is its index.
+ */
+export function packParticles(particles: SeedParticle[], substepRate: number): Float32Array<ArrayBuffer> {
   const data = new Float32Array(particles.length * PARTICLE_WORDS);
   particles.forEach((p, i) => {
     const o = i * PARTICLE_WORDS;
     data[o + POS] = p.x;
     data[o + POS + 1] = p.y;
-    data[o + PREV_POS] = p.prevX;
-    data[o + PREV_POS + 1] = p.prevY;
+    data[o + PREV_POS] = p.x - p.vx / substepRate;
+    data[o + PREV_POS + 1] = p.y - p.vy / substepRate;
     data[o + COLOR_AND_RADIUS] = p.rgb[0];
     data[o + COLOR_AND_RADIUS + 1] = p.rgb[1];
     data[o + COLOR_AND_RADIUS + 2] = p.rgb[2];
@@ -51,16 +62,22 @@ export function packParticles(particles: Particle[]): Float32Array<ArrayBuffer> 
   return data;
 }
 
-/** Reads particles back out of the contents of a particle buffer. */
-export function unpackParticles(contents: ArrayBuffer): Particle[] {
+/**
+ * Reads particles back out of the contents of the current pipeline's particle
+ * buffer, deriving velocity from the move over one substep at `substepRate`.
+ */
+export function unpackParticles(contents: ArrayBuffer, substepRate: number): Particle[] {
   const data = new Float32Array(contents);
   const particles: Particle[] = [];
   for (let o = 0; o + PARTICLE_WORDS <= data.length; o += PARTICLE_WORDS) {
+    const x = data[o + POS];
+    const y = data[o + POS + 1];
     particles.push({
-      x: data[o + POS],
-      y: data[o + POS + 1],
-      prevX: data[o + PREV_POS],
-      prevY: data[o + PREV_POS + 1],
+      id: particles.length,
+      x,
+      y,
+      vx: (x - data[o + PREV_POS]) * substepRate,
+      vy: (y - data[o + PREV_POS + 1]) * substepRate,
       radius: data[o + COLOR_AND_RADIUS + 3],
       rgb: [
         data[o + COLOR_AND_RADIUS],

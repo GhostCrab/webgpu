@@ -6,8 +6,9 @@ import { SimulationTarget } from '../src/simulation-target';
 import { binGrid } from '../src/verlet/verlet-bin-computer';
 import {
   BOUNDS,
-  createSim,
+  createSim as createAnySim,
   DEFAULT_CONSTRAIN_RADIUS,
+  PIPELINES,
   RADIUS,
   runStats,
   seededScatter,
@@ -28,7 +29,21 @@ function drop(substeps: number, substepRate = SUBSTEP_RATE) {
 const FRAME = 20;
 const ONE_FRAME_DROP = drop(FRAME);
 
-describe.skipIf(!device)('one particle', () => {
+/** A speed in simulation units per second, as a move over one substep at the default rate. */
+const perSubstep = (speed: number) => speed / SUBSTEP_RATE;
+/** A move over one substep at the default rate, as a speed in simulation units per second. */
+const perSecond = (move: number) => move * SUBSTEP_RATE;
+
+/** Makes sims on the current pipeline, unless a test asks for another. */
+const createSim: typeof createAnySim = (particles, options) =>
+  createAnySim(particles, { pipeline: 'current', ...options });
+
+// The behaviour both pipelines share is judged by the same tests.
+describe.skipIf(!device).each(PIPELINES)('the %s pipeline', (pipeline) => {
+const createSim: typeof createAnySim = (particles, options) =>
+  createAnySim(particles, { pipeline, ...options });
+
+describe('one particle', () => {
   test('falls under gravity along +y', async () => {
     const sim = await createSim([{ x: 0, y: 0 }]);
     sim.step(FRAME);
@@ -96,7 +111,7 @@ describe.skipIf(!device)('one particle', () => {
 // No particle moves further than the smallest particle's radius in one
 // substep. The last thing a substep does is move each particle, so after a
 // substep the gap between position and previous position is that move.
-describe.skipIf(!device)('the speed limit', () => {
+describe('the speed limit', () => {
   const small = 1;
   const distance = (p: { x: number; y: number }, q: { x: number; y: number }) =>
     Math.hypot(p.x - q.x, p.y - q.y);
@@ -105,19 +120,19 @@ describe.skipIf(!device)('the speed limit', () => {
     // 40 units per substep to the right, which stays clear of the boundary
     // circle for a whole frame; the smallest radius is 1.
     const sim = await createSim([
-      { x: 0, y: 0, prevX: -40, prevY: 0, radius: 3 },
+      { x: 0, y: 0, vx: perSecond(40), radius: 3 },
       { x: 0, y: 500, radius: small }
     ]);
     sim.step(1, { collide: false });
     let [p] = await sim.read();
-    expect([p.prevX, p.prevY]).toEqual([0, 0]);
     // Shortened to exactly the limit, still heading right.
     expect(distance(p, { x: 0, y: 0 })).toBeCloseTo(small, 4);
     expect(p.x).toBeGreaterThan(0.99);
+    expect(perSubstep(Math.hypot(p.vx, p.vy))).toBeCloseTo(small, 4);
 
     sim.step(FRAME - 1, { collide: false });
     [p] = await sim.read();
-    expect(distance(p, { x: p.prevX, y: p.prevY })).toBeLessThanOrEqual(small + 1e-4);
+    expect(perSubstep(Math.hypot(p.vx, p.vy))).toBeLessThanOrEqual(small + 1e-4);
     expect(distance(p, { x: 0, y: 0 })).toBeLessThanOrEqual(FRAME * small + 1e-3);
   });
 
@@ -132,22 +147,131 @@ describe.skipIf(!device)('the speed limit', () => {
     for (let substep = 0; substep < 30 * FRAME; substep++) {
       sim.step(1, { clickX: 0, clickY: 0, clickForce: 10000 });
       for (const p of await sim.read()) {
-        expect(Number.isFinite(p.x + p.y + p.prevX + p.prevY)).toBe(true);
-        expect(distance(p, { x: p.prevX, y: p.prevY })).toBeLessThanOrEqual(RADIUS + 1e-4);
+        expect(Number.isFinite(p.x + p.y + p.vx + p.vy)).toBe(true);
+        expect(perSubstep(Math.hypot(p.vx, p.vy))).toBeLessThanOrEqual(RADIUS + 1e-4);
       }
     }
   });
 });
 
-describe.skipIf(!device)('a particle exactly at the click point', () => {
+describe('a particle exactly at the click point', () => {
   test.each([2000, -2000])('receives no click force and stays finite (force %s)', async (clickForce) => {
     const sim = await createSim([{ x: 100, y: 50 }]);
     sim.step(FRAME, { clickX: 100, clickY: 50, clickForce });
     const [p] = await sim.read();
-    expect([p.x, p.y, p.prevX, p.prevY]).toEqual([100, 50, 100, 50]);
+    expect([p.x, p.y, p.vx, p.vy]).toEqual([100, 50, 0, 0]);
   });
 });
 
+describe('the boundary circle', () => {
+  const edge = DEFAULT_CONSTRAIN_RADIUS - RADIUS;
+  // Just inside the bottom of the circle, moving down at 0.5 per substep.
+  const falling = [{ x: 0, y: 1050, vy: perSecond(0.5) }];
+
+  test('classic constrain stops the particle at the edge', async () => {
+    const sim = await createSim(falling);
+    sim.step(FRAME, { classicConstrain: true });
+    const [p] = await sim.read();
+    expect(p.y).toBeGreaterThan(edge - 0.01);
+    expect(p.y).toBeLessThan(edge + 0.01);
+  });
+
+  test('reflective constrain bounces the particle back inward', async () => {
+    const sim = await createSim(falling);
+    sim.step(FRAME, { classicConstrain: false });
+    const [p] = await sim.read();
+    expect(p.y).toBeLessThan(edge);
+    expect(p.vy).toBeLessThan(0);
+  });
+
+  test.each([true, false])('the particle comes to rest at the edge (classic: %s)', async (classicConstrain) => {
+    const sim = await createSim(falling);
+    sim.step(126 * FRAME, { classicConstrain });
+    const [p] = await sim.read();
+    expect(p.y).toBeGreaterThan(edge - 0.01);
+    expect(p.y).toBeLessThan(edge + 0.01);
+    expect(Math.abs(perSubstep(p.vy))).toBeLessThan(0.01);
+  });
+
+  test.each([true, false])(
+    'a particle crossing the boundary circle ends the substep on it, not past it (classic: %s)',
+    async (classicConstrain) => {
+      // Moving +x at 0.5 per substep, it would end this substep 0.25 past the edge.
+      const sim = await createSim([{ x: edge - 0.25, y: 0, vx: perSecond(0.5) }]);
+      sim.step(1, { classicConstrain });
+      const [p] = await sim.read();
+      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+    }
+  );
+
+  test('reflective constrain: a head-on impact returns the particle inward at 0.8 of its speed', async () => {
+    const sim = await createSim([{ x: edge - 0.25, y: 0, vx: perSecond(0.5) }]);
+    sim.step(1);
+    const [p] = await sim.read();
+    expect(p.x).toBeCloseTo(edge, 3);
+    expect(perSubstep(p.vx)).toBeCloseTo(-0.4, 3);
+  });
+
+  test('reflective constrain: a glancing impact keeps its speed along the boundary', async () => {
+    // At the bottom of the circle, moving +x at 0.5 and outward (+y) at 0.2 per
+    // substep. Gravity adds 3000 / 1200^2 = 0.0021 to the outward speed, so
+    // 0.8 of 0.2021 comes back inward; the speed along the boundary is kept.
+    const sim = await createSim([{ x: 0, y: edge - 0.1, vx: perSecond(0.5), vy: perSecond(0.2) }]);
+    sim.step(1);
+    const [p] = await sim.read();
+    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+    expect(perSubstep(p.vx)).toBeCloseTo(0.5, 3);
+    expect(perSubstep(p.vy)).toBeCloseTo(-0.1617, 3);
+  });
+
+  test('reflective constrain: a particle outside the circle and moving inward is not reflected', async () => {
+    const sim = await createSim([{ x: edge + 5, y: 0, vx: perSecond(-0.5) }]);
+    sim.step(1);
+    const [p] = await sim.read();
+    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
+    expect(perSubstep(p.vx)).toBeCloseTo(-0.5, 3);
+  });
+
+  test.each([true, false])(
+    'a particle far outside the circle returns to the edge without crossing it (classic: %s)',
+    async (classicConstrain) => {
+      // GitHub issue #2: at rest 400 past the edge, it was flung to the far side.
+      const sim = await createSim([{ x: 0, y: 900 }]);
+      sim.step(FRAME, { constrainRadius: 500, classicConstrain });
+      const [p] = await sim.read();
+      expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
+      expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
+      expect(perSubstep(Math.hypot(p.vx, p.vy))).toBeLessThan(0.01);
+    }
+  );
+
+  test.each([true, false])(
+    'the boundary circle can be centred away from the origin (classic: %s)',
+    async (classicConstrain) => {
+      // Falling at 0.5 per substep onto the bottom of a circle centred at (400, 0).
+      const sim = await createSim([{ x: 400, y: 490, vy: perSecond(0.5) }]);
+      sim.step(FRAME, { constrainCenter: [400, 0], constrainRadius: 500, classicConstrain });
+      const [p] = await sim.read();
+      expect(Math.hypot(p.x - 400, p.y)).toBeLessThanOrEqual(500 - RADIUS + 0.001);
+      expect(p.y).toBeGreaterThan(490);
+      // The boundary's normal at the bottom is vertical, so nothing moves it sideways.
+      expect(p.x).toBeCloseTo(400, 3);
+      expect(perSubstep(p.vx)).toBeCloseTo(0, 3);
+    }
+  );
+
+  test('a smaller constrain radius moves the edge', async () => {
+    const sim = await createSim([{ x: 0, y: 490 }]);
+    sim.step(126 * FRAME, { constrainRadius: 500, classicConstrain: true });
+    const [p] = await sim.read();
+    expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
+    expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
+  });
+});
+
+});
+
+// Collisions exist only in the current pipeline so far.
 describe.skipIf(!device)('two overlapping particles', () => {
   const pair = [
     { x: -1, y: 0 },
@@ -173,7 +297,7 @@ describe.skipIf(!device)('two overlapping particles', () => {
     sim.step(FRAME);
     const [a, b] = await sim.read();
     for (const p of [a, b]) {
-      expect(Number.isFinite(p.x + p.y + p.prevX + p.prevY)).toBe(true);
+      expect(Number.isFinite(p.x + p.y + p.vx + p.vy)).toBe(true);
     }
     expect(Math.abs(b.x - a.x)).toBeGreaterThan(RADIUS);
     expect(a.x + b.x).toBeCloseTo(20, 4);
@@ -187,112 +311,6 @@ describe.skipIf(!device)('two overlapping particles', () => {
     expect(a.x).toBe(-1);
     expect(b.x).toBe(1);
     expect(a.y).toBe(b.y);
-  });
-});
-
-describe.skipIf(!device)('the boundary circle', () => {
-  const edge = DEFAULT_CONSTRAIN_RADIUS - RADIUS;
-  // Just inside the bottom of the circle, moving down at 0.5 per substep.
-  const falling = [{ x: 0, y: 1050, prevX: 0, prevY: 1049.5 }];
-
-  test('classic constrain stops the particle at the edge', async () => {
-    const sim = await createSim(falling);
-    sim.step(FRAME, { classicConstrain: true });
-    const [p] = await sim.read();
-    expect(p.y).toBeGreaterThan(edge - 0.01);
-    expect(p.y).toBeLessThan(edge + 0.01);
-  });
-
-  test('reflective constrain bounces the particle back inward', async () => {
-    const sim = await createSim(falling);
-    sim.step(FRAME, { classicConstrain: false });
-    const [p] = await sim.read();
-    expect(p.y).toBeLessThan(edge);
-    expect(p.y).toBeLessThan(p.prevY);
-  });
-
-  test.each([true, false])('the particle comes to rest at the edge (classic: %s)', async (classicConstrain) => {
-    const sim = await createSim(falling);
-    sim.step(126 * FRAME, { classicConstrain });
-    const [p] = await sim.read();
-    expect(p.y).toBeGreaterThan(edge - 0.01);
-    expect(p.y).toBeLessThan(edge + 0.01);
-    expect(Math.abs(p.y - p.prevY)).toBeLessThan(0.01);
-  });
-
-  test.each([true, false])(
-    'a particle crossing the boundary circle ends the substep on it, not past it (classic: %s)',
-    async (classicConstrain) => {
-      // Moving +x at 0.5 per substep, it would end this substep 0.25 past the edge.
-      const sim = await createSim([{ x: edge - 0.25, y: 0, prevX: edge - 0.75, prevY: 0 }]);
-      sim.step(1, { classicConstrain });
-      const [p] = await sim.read();
-      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
-    }
-  );
-
-  test('reflective constrain: a head-on impact returns the particle inward at 0.8 of its speed', async () => {
-    const sim = await createSim([{ x: edge - 0.25, y: 0, prevX: edge - 0.75, prevY: 0 }]);
-    sim.step(1);
-    const [p] = await sim.read();
-    expect(p.x).toBeCloseTo(edge, 3);
-    expect(p.x - p.prevX).toBeCloseTo(-0.4, 3);
-  });
-
-  test('reflective constrain: a glancing impact keeps its speed along the boundary', async () => {
-    // At the bottom of the circle, moving +x at 0.5 and outward (+y) at 0.2 per
-    // substep. Gravity adds 3000 / 1200^2 = 0.0021 to the outward speed, so
-    // 0.8 of 0.2021 comes back inward; the speed along the boundary is kept.
-    const sim = await createSim([{ x: 0, y: edge - 0.1, prevX: -0.5, prevY: edge - 0.3 }]);
-    sim.step(1);
-    const [p] = await sim.read();
-    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
-    expect(p.x - p.prevX).toBeCloseTo(0.5, 3);
-    expect(p.y - p.prevY).toBeCloseTo(-0.1617, 3);
-  });
-
-  test('reflective constrain: a particle outside the circle and moving inward is not reflected', async () => {
-    const sim = await createSim([{ x: edge + 5, y: 0, prevX: edge + 5.5, prevY: 0 }]);
-    sim.step(1);
-    const [p] = await sim.read();
-    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(edge + 0.001);
-    expect(p.x - p.prevX).toBeCloseTo(-0.5, 3);
-  });
-
-  test.each([true, false])(
-    'a particle far outside the circle returns to the edge without crossing it (classic: %s)',
-    async (classicConstrain) => {
-      // GitHub issue #2: at rest 400 past the edge, it was flung to the far side.
-      const sim = await createSim([{ x: 0, y: 900 }]);
-      sim.step(FRAME, { constrainRadius: 500, classicConstrain });
-      const [p] = await sim.read();
-      expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
-      expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
-      expect(Math.hypot(p.x - p.prevX, p.y - p.prevY)).toBeLessThan(0.01);
-    }
-  );
-
-  test.each([true, false])(
-    'the boundary circle can be centred away from the origin (classic: %s)',
-    async (classicConstrain) => {
-      // Falling at 0.5 per substep onto the bottom of a circle centred at (400, 0).
-      const sim = await createSim([{ x: 400, y: 490, prevX: 400, prevY: 489.5 }]);
-      sim.step(FRAME, { constrainCenter: [400, 0], constrainRadius: 500, classicConstrain });
-      const [p] = await sim.read();
-      expect(Math.hypot(p.x - 400, p.y)).toBeLessThanOrEqual(500 - RADIUS + 0.001);
-      expect(p.y).toBeGreaterThan(490);
-      // The boundary's normal at the bottom is vertical, so nothing moves it sideways.
-      expect(p.x).toBeCloseTo(400, 3);
-      expect(p.x - p.prevX).toBeCloseTo(0, 3);
-    }
-  );
-
-  test('a smaller constrain radius moves the edge', async () => {
-    const sim = await createSim([{ x: 0, y: 490 }]);
-    sim.step(126 * FRAME, { constrainRadius: 500, classicConstrain: true });
-    const [p] = await sim.read();
-    expect(p.y).toBeGreaterThan(500 - RADIUS - 0.01);
-    expect(p.y).toBeLessThan(500 - RADIUS + 0.01);
   });
 });
 
@@ -362,7 +380,7 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     expect(stats.centreX).toBeCloseTo(-2.403, 1); // within 0.05
     expect(stats.centreY).toBeCloseTo(3.114, 1);
     expect(stats.meanDistance).toBeCloseTo(787.063, 1);
-    expect(stats.meanSpeed).toBeCloseTo(0.3651, 2); // within 0.005
+    expect(perSubstep(stats.meanSpeed)).toBeCloseTo(0.3651, 2); // within 0.005
   });
 
   test('settles into a pile at the bottom of the circle', async () => {
@@ -374,7 +392,7 @@ describe.skipIf(!device)('15,000 seeded particles', () => {
     // Every particle ends inside the boundary circle.
     expect(stats.maxDistance).toBeLessThan(DEFAULT_CONSTRAIN_RADIUS - RADIUS + 0.1);
     // At rest.
-    expect(stats.meanSpeed).toBeLessThan(0.05);
+    expect(perSubstep(stats.meanSpeed)).toBeLessThan(0.05);
     // Piled at the bottom (+y), roughly centred. Measured: centreY 970.4 to 970.7.
     expect(stats.centreY).toBeGreaterThan(967);
     expect(stats.centreY).toBeLessThan(974);

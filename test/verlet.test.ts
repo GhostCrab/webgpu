@@ -26,7 +26,7 @@ describe('bin grid sizing', () => {
 });
 
 describe('scatter', () => {
-  const options = { count: 500, bounds: BOUNDS, radius: RADIUS, substepRate: 1200 };
+  const options = { count: 500, bounds: BOUNDS, radius: RADIUS };
 
   test('is reproducible for a given random source', () => {
     const a = scatter({ ...options, random: mulberry32(7) });
@@ -81,9 +81,9 @@ describe.skipIf(!device)('reset', () => {
 
     sim.reset();
     const after = await sim.read();
-    expect(after.map((p) => [p.x, p.y, p.prevX, p.prevY])).toEqual([
-      [10, 20, 10, 20],
-      [-30, 40, -30, 40]
+    expect(after.map((p) => [p.x, p.y, p.vx, p.vy])).toEqual([
+      [10, 20, 0, 0],
+      [-30, 40, 0, 0]
     ]);
   });
 });

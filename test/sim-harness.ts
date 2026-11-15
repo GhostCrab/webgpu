@@ -6,7 +6,7 @@ import { afterEach } from 'vitest';
 import { readBuffer } from '../src/read-buffer';
 import { SimulationTarget } from '../src/simulation-target';
 import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
-import { scatter, Verlet } from '../src/verlet/verlet';
+import { PipelineName, scatter, Verlet } from '../src/verlet/verlet';
 
 /**
  * The test surface for the simulation. Tests place particles, advance them
@@ -25,9 +25,9 @@ const SUBSTEPS_PER_SUBMIT = 20;
 export interface TestParticle {
   x: number;
   y: number;
-  /** Defaults to the position, i.e. at rest. */
-  prevX?: number;
-  prevY?: number;
+  /** Velocity in simulation units per second. Defaults to 0, i.e. at rest. */
+  vx?: number;
+  vy?: number;
   radius?: number;
   rgb?: [number, number, number];
 }
@@ -82,7 +82,6 @@ export function seededScatter(count: number, seed: number): TestParticle[] {
     count,
     bounds: BOUNDS,
     radius: RADIUS,
-    substepRate: SUBSTEP_RATE,
     random: mulberry32(seed)
   });
 }
@@ -97,7 +96,18 @@ afterEach(async () => {
   if (failed) throw failed.reason;
 });
 
-export async function createSim(particles: TestParticle[]): Promise<Sim | null> {
+/** Every pipeline the simulation can run, for tests that judge them all alike. */
+export const PIPELINES: PipelineName[] = ['current'];
+
+export interface SimOptions {
+  /** Defaults to the app's default pipeline. */
+  pipeline?: PipelineName;
+}
+
+export async function createSim(
+  particles: TestParticle[],
+  options: SimOptions = {}
+): Promise<Sim | null> {
   const device = await getDevice();
   if (!device) return null;
 
@@ -142,12 +152,13 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
         bounds: BOUNDS,
         projection: target.projection,
         target: target.drawTarget,
+        pipeline: options.pipeline,
         seed: () =>
           particles.map((p) => ({
             x: p.x,
             y: p.y,
-            prevX: p.prevX ?? p.x,
-            prevY: p.prevY ?? p.y,
+            vx: p.vx ?? 0,
+            vy: p.vy ?? 0,
             radius: p.radius ?? RADIUS,
             rgb: p.rgb ?? [1, 1, 1]
           }))
@@ -263,6 +274,7 @@ export interface RunStats {
   centreY: number;
   meanDistance: number;
   maxDistance: number;
+  /** In simulation units per second. */
   meanSpeed: number;
   overlapPairs: number;
   meanOverlap: number;
@@ -286,13 +298,13 @@ export function runStats(particles: ParticleState[]): RunStats {
     maxOverlap: 0
   };
   for (const p of particles) {
-    if (!Number.isFinite(p.x + p.y + p.prevX + p.prevY)) s.nonFinite++;
+    if (!Number.isFinite(p.x + p.y + p.vx + p.vy)) s.nonFinite++;
     const d = Math.hypot(p.x, p.y);
     s.centreX += p.x / n;
     s.centreY += p.y / n;
     s.meanDistance += d / n;
     s.maxDistance = Math.max(s.maxDistance, d);
-    s.meanSpeed += Math.hypot(p.x - p.prevX, p.y - p.prevY) / n;
+    s.meanSpeed += Math.hypot(p.vx, p.vy) / n;
   }
   let overlapSum = 0;
   for (let i = 0; i < n; i++) {

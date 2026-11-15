@@ -4,6 +4,7 @@ import {
   packParticles,
   PARAMS_BYTES,
   Particle,
+  SeedParticle,
   unpackParticles
 } from './particle-layout';
 import { readBuffer } from '../read-buffer';
@@ -36,8 +37,6 @@ export interface ScatterOptions {
   /** Particles are scattered over a square of this side, centred on the origin. */
   bounds: number;
   radius: number;
-  /** Substeps per second; the starting velocity is expressed per substep. */
-  substepRate: number;
   /** Source of numbers in [0, 1). Defaults to Math.random. */
   random?: () => number;
 }
@@ -46,10 +45,10 @@ export interface ScatterOptions {
  * The default starting state: a uniform scatter, each particle with a small
  * random velocity and a shade of one random hue.
  */
-export function scatter(options: ScatterOptions): Particle[] {
-  const { count, bounds, radius, substepRate } = options;
+export function scatter(options: ScatterOptions): SeedParticle[] {
+  const { count, bounds, radius } = options;
   // Starting speeds of up to 360 units per second each way.
-  const maxShift = 360 / substepRate;
+  const maxSpeed = 360;
   const random = options.random ?? Math.random;
 
   const hue = random();
@@ -59,14 +58,14 @@ export function scatter(options: ScatterOptions): Particle[] {
     [lerpStart, lerpEnd] = [lerpEnd, lerpStart];
   }
 
-  const particles: Particle[] = [];
+  const particles: SeedParticle[] = [];
   for (let i = 0; i < count; i++) {
     const x = random() * bounds - bounds / 2;
     const y = random() * bounds - bounds / 2;
-    const prevX = x + (random() - 0.5) * 2 * maxShift;
-    const prevY = y + (random() - 0.5) * 2 * maxShift;
+    const vx = (0.5 - random()) * 2 * maxSpeed;
+    const vy = (0.5 - random()) * 2 * maxSpeed;
     const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, random()), 1);
-    particles.push({ x, y, prevX, prevY, radius, rgb });
+    particles.push({ x, y, vx, vy, radius, rgb });
   }
   return particles;
 }
@@ -76,7 +75,7 @@ export function scatter(options: ScatterOptions): Particle[] {
  * a seed the simulation cannot size its buffers and bins from, naming what is
  * wrong with it.
  */
-function radiusRange(particles: Particle[]): { smallest: number; largest: number } {
+function radiusRange(particles: SeedParticle[]): { smallest: number; largest: number } {
   if (particles.length === 0) {
     throw new Error('seed returned no particles');
   }
@@ -116,6 +115,12 @@ export interface SimulationInput {
   substepRate: number;
 }
 
+/**
+ * The current pipeline, or the new one being built beside it (spec #9). The
+ * choice goes when the new pipeline replaces the current one.
+ */
+export type PipelineName = 'current' | 'new';
+
 export interface VerletOptions {
   /** Side of the square region of simulation space that particles may occupy. */
   bounds: number;
@@ -123,12 +128,15 @@ export interface VerletOptions {
   projection: Float32Array;
   /** The render pass configuration that draw() renders into. */
   target: DrawTarget;
+  /** Which pipeline advances and draws the particles. Defaults to the current one. */
+  pipeline?: PipelineName;
   /**
    * Produces the starting particles, and is called again by reset(). It must
    * return the same number of particles each time. Defaults to a random
-   * scatter of 15,000 particles of radius 1.5.
+   * scatter of 15,000 particles of radius 1.5. Each particle's id is its
+   * index in what the seed returns.
    */
-  seed?: () => Particle[];
+  seed?: () => SeedParticle[];
 }
 
 /**
@@ -143,7 +151,7 @@ export class Verlet {
 
   private device: GPUDevice;
   private bounds: number;
-  private seed: () => Particle[];
+  private seed: () => SeedParticle[];
   private binSize: number;
   /** The furthest a particle may move in one substep: the smallest radius in use. */
   private speedLimit: number;
@@ -160,8 +168,7 @@ export class Verlet {
     this.bounds = options.bounds;
     this.seed =
       options.seed ??
-      (() =>
-        scatter({ count: 15000, bounds: this.bounds, radius: 1.5, substepRate: this.substepRate }));
+      (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5 }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);
@@ -174,7 +181,7 @@ export class Verlet {
     this.binSize = 2 * radii.largest;
     this.speedLimit = radii.smallest;
 
-    const data = packParticles(particles);
+    const data = packParticles(particles, this.substepRate);
     this.particleBuffer = device.createBuffer({
       size: data.byteLength,
       usage:
@@ -285,12 +292,12 @@ export class Verlet {
       throw new Error('seed returned a particle larger than the bins were sized for');
     }
     this.speedLimit = radii.smallest;
-    this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles));
+    this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles, this.substepRate));
   }
 
-  /** Reads the current particles back from the GPU. */
+  /** Reads the current particles back from the GPU, ordered by particle id. */
   async readParticles(): Promise<Particle[]> {
-    return unpackParticles(await this.readParticleBuffer());
+    return unpackParticles(await this.readParticleBuffer(), this.substepRate);
   }
 
   /** The raw contents of the particle buffer. */

@@ -17,12 +17,23 @@ type Rgb = [number, number, number];
 
 test('particles survive a round trip through the particle buffer layout', () => {
   const particles = [
-    { x: 1, y: -2, prevX: 3, prevY: -4, radius: 1.5, rgb: [0.25, 0.5, 0.75] as Rgb },
-    { x: 100, y: 200, prevX: 100, prevY: 200, radius: 0, rgb: [1, 0, 0] as Rgb }
+    { id: 0, x: 1, y: -2, vx: -2400, vy: 2400, radius: 1.5, rgb: [0.25, 0.5, 0.75] as Rgb },
+    { id: 1, x: 100, y: 200, vx: 0, vy: 0, radius: 0, rgb: [1, 0, 0] as Rgb }
   ];
-  const data = packParticles(particles);
+  // The current pipeline holds velocity as the move over one substep.
+  const data = packParticles(particles, 1200);
   expect(data.byteLength).toBe(2 * PARTICLE_BYTES);
-  expect(unpackParticles(data.buffer)).toEqual(particles);
+  expect(unpackParticles(data.buffer, 1200)).toEqual(particles);
+});
+
+test('the current pipeline holds velocity as a move per substep behind the position', () => {
+  const [particle] = unpackParticles(
+    packParticles([{ x: 10, y: 20, vx: 600, vy: -1200, radius: 1, rgb: [1, 1, 1] }], 1200)
+      .buffer,
+    2400
+  );
+  // 0.5 and -1 per substep, read back at twice the substep rate.
+  expect([particle.vx, particle.vy]).toEqual([1200, -2400]);
 });
 
 test('the atomic view of a particle has the same layout as the plain one', () => {
