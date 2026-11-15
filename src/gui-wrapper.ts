@@ -41,6 +41,7 @@ export default class GuiWrapper {
     simulation.add(controls, 'classicConstrain').name('Classic Constrain (T)').listen();
 
     const parameters = this.gui.addFolder('Parameters');
+    // Known: the range stops below the starting radius (GitHub issue #3).
     parameters.add(controls, 'constrainRadius', 50, 1000).name('Constrain Radius');
     parameters.add(controls, 'impulse', 0, 10000).name('Mouse Impulse');
 

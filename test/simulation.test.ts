@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import { getDevice } from './gpu';
+
+import { SimulationTarget } from '../src/simulation-target';
 import {
   createSim,
   DEFAULT_CONSTRAIN_RADIUS,
@@ -223,6 +225,22 @@ describe.skipIf(!device)('particle rendering', () => {
     expect(pixel(72 + 8, 72)).toEqual([255, 0, 0]);
     expect(pixel(36, 72)).toEqual([0, 0, 0]);
     expect(pixel(399 - 36, 72)).toEqual([0, 0, 0]);
+  });
+
+  test('a canvas with no area is skipped without asking for a canvas view or drawing', async () => {
+    const target = new SimulationTarget(device, { width: 3840, height: 2160, format: 'bgra8unorm' });
+    try {
+      const never = () => {
+        throw new Error('nothing should be presented to a canvas with no area');
+      };
+      for (const [width, height] of [[0, 0], [800, 0], [NaN, 600]]) {
+        target.resize(width, height);
+        target.render(device.createCommandEncoder(), never, never);
+        expect(target.toSimulation(10, 10)).toEqual([0, 0]);
+      }
+    } finally {
+      target.destroy();
+    }
   });
 
   test('a taller canvas shows the simulation centred, with black bars above and below', async () => {

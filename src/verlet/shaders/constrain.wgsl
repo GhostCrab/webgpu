@@ -19,6 +19,8 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
   var dist = length(v);
 
   if (dist > constrainRadius - radius) {
+    // Known: a particle far outside the circle gains a large inward velocity
+    // from this correction (GitHub issue #2).
     if (params.constrainType == 0) {
       var n = v / dist;
       pos = constrainCenter - (n * (constrainRadius - radius));

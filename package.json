@@ -14,7 +14,7 @@
         "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts",
         "test": "vitest run --root .",
         "typecheck": "tsc --noEmit && tsc --noEmit -p test",
-        "prepare": "git config core.hooksPath .githooks"
+        "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch{}\""
     },
     "repository": {
         "type": "git",

@@ -25,16 +25,17 @@ export interface SimulationTargetOptions {
 class MultisampledPass implements GPURenderPassDescriptor {
   colorAttachments: GPURenderPassColorAttachment[];
   depthStencilAttachment: GPURenderPassDepthStencilAttachment;
-  private textures: GPUTexture[];
+  private colorTexture: GPUTexture;
+  private depthTexture: GPUTexture;
 
   constructor(device: GPUDevice, width: number, height: number, format: GPUTextureFormat) {
-    const colorTexture = device.createTexture({
+    this.colorTexture = device.createTexture({
       size: [width, height],
       sampleCount: SAMPLE_COUNT,
       format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT
     });
-    const depthTexture = device.createTexture({
+    this.depthTexture = device.createTexture({
       size: [width, height, 1],
       sampleCount: SAMPLE_COUNT,
       dimension: '2d',
@@ -42,18 +43,16 @@ class MultisampledPass implements GPURenderPassDescriptor {
       usage: GPUTextureUsage.RENDER_ATTACHMENT
     });
 
-    this.textures = [colorTexture, depthTexture];
-
     this.colorAttachments = [
       {
-        view: colorTexture.createView(),
+        view: this.colorTexture.createView(),
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
         loadOp: 'clear',
         storeOp: 'store'
       }
     ];
     this.depthStencilAttachment = {
-      view: depthTexture.createView(),
+      view: this.depthTexture.createView(),
       depthClearValue: 1,
       depthLoadOp: 'clear',
       depthStoreOp: 'store',
@@ -69,7 +68,8 @@ class MultisampledPass implements GPURenderPassDescriptor {
   }
 
   destroy() {
-    this.textures.forEach((texture) => texture.destroy());
+    this.colorTexture.destroy();
+    this.depthTexture.destroy();
   }
 }
 
@@ -90,7 +90,9 @@ export class SimulationTarget {
 
   private image: GPUTexture;
   private imagePass: MultisampledPass;
+  /** Undefined while the canvas has no area, when there is nothing to present to. */
   private canvasPass: MultisampledPass | undefined;
+  private resized = false;
   private viewport: Viewport = { x: 0, y: 0, width: 1, height: 1 };
 
   private presentPipeline: GPURenderPipeline;
@@ -157,18 +159,26 @@ export class SimulationTarget {
     });
   }
 
-  /** Call with the canvas size in pixels, at the start and whenever it changes. */
+  /**
+   * Call with the canvas size in pixels, at the start and whenever it changes.
+   * A hidden or collapsed canvas reports a size of 0; presentation is then
+   * skipped until it has an area again.
+   */
   resize(canvasWidth: number, canvasHeight: number) {
-    this.viewport = fitViewport(this.width, this.height, canvasWidth, canvasHeight);
+    const width = Number.isFinite(canvasWidth) ? Math.max(0, Math.floor(canvasWidth)) : 0;
+    const height = Number.isFinite(canvasHeight) ? Math.max(0, Math.floor(canvasHeight)) : 0;
 
-    // A hidden or collapsed canvas reports a size of 0, which a texture cannot have.
+    // Build the replacement before releasing the old pass, so a failure here
+    // leaves the target as it was.
+    const next =
+      width > 0 && height > 0
+        ? new MultisampledPass(this.device, width, height, this.format)
+        : undefined;
+
     this.canvasPass?.destroy();
-    this.canvasPass = new MultisampledPass(
-      this.device,
-      Math.max(1, canvasWidth),
-      Math.max(1, canvasHeight),
-      this.format
-    );
+    this.canvasPass = next;
+    this.viewport = fitViewport(this.width, this.height, width, height);
+    this.resized = true;
   }
 
   /** Maps a point in canvas pixels to simulation space. */
@@ -178,22 +188,27 @@ export class SimulationTarget {
 
   /**
    * Encodes one frame: `draw` renders the simulation into the image, which is
-   * then presented to `canvasView`, letterboxed. Requires a prior resize().
+   * then presented, letterboxed, to the view `canvasView` returns. Requires a
+   * prior resize(). While the canvas has no area nothing is encoded and
+   * neither callback is called.
    */
   render(
     encoder: GPUCommandEncoder,
-    canvasView: GPUTextureView,
+    canvasView: () => GPUTextureView,
     draw: (pass: GPURenderPassEncoder) => void
   ) {
-    if (!this.canvasPass) {
+    if (!this.resized) {
       throw new Error('SimulationTarget.resize() must be called before render()');
+    }
+    if (!this.canvasPass) {
+      return;
     }
 
     const imagePass = encoder.beginRenderPass(this.imagePass.resolveTo(this.image.createView()));
     draw(imagePass);
     imagePass.end();
 
-    const present = encoder.beginRenderPass(this.canvasPass.resolveTo(canvasView));
+    const present = encoder.beginRenderPass(this.canvasPass.resolveTo(canvasView()));
     const { x, y, width, height } = this.viewport;
     present.setViewport(x, y, width, height, 0, 1);
     present.setScissorRect(Math.floor(x), Math.floor(y), Math.floor(width), Math.floor(height));

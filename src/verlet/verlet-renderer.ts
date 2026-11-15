@@ -24,15 +24,15 @@ export class VerletRenderer {
       entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }]
     });
 
-    const projectionBuffer = (this.projectionBuffer = device.createBuffer({
+    this.projectionBuffer = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    }));
-    device.queue.writeBuffer(projectionBuffer, 0, new Float32Array(options.projection));
+    });
+    device.queue.writeBuffer(this.projectionBuffer, 0, new Float32Array(options.projection));
 
     this.bindGroup = device.createBindGroup({
       layout: bindGroupLayout,
-      entries: [{ binding: 0, resource: { buffer: projectionBuffer } }]
+      entries: [{ binding: 0, resource: { buffer: this.projectionBuffer } }]
     });
 
     const shaderModule = device.createShaderModule({ code: shaderCode });

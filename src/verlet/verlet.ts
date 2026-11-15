@@ -68,6 +68,27 @@ export function scatter(options: ScatterOptions): Particle[] {
   return particles;
 }
 
+/**
+ * The largest radius among seeded particles. Rejects a seed the simulation
+ * cannot size its buffers and bins from, naming what is wrong with it.
+ */
+function largestRadius(particles: Particle[]): number {
+  if (particles.length === 0) {
+    throw new Error('seed returned no particles');
+  }
+  let largest = 0;
+  for (const p of particles) {
+    if (!Number.isFinite(p.radius) || p.radius < 0) {
+      throw new Error(`seed returned a particle with radius ${p.radius}; a radius must be 0 or more`);
+    }
+    if (p.radius > largest) largest = p.radius;
+  }
+  if (largest === 0) {
+    throw new Error('seed returned only disabled particles (radius 0), so bins cannot be sized');
+  }
+  return largest;
+}
+
 /** Everything outside the simulation that affects one frame of it. */
 export interface SimulationInput {
   /** Where the click force acts, in simulation space. */
@@ -128,20 +149,17 @@ export class Verlet {
       options.seed ??
       (() => scatter({ count: 15000, bounds: this.bounds, radius: 1.5, substeps: this.substeps }));
 
+    if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
+      throw new Error(`bounds must be a positive number; got ${this.bounds}`);
+    }
+    if (!Number.isInteger(this.substeps) || this.substeps < 1) {
+      throw new Error(`substeps must be a positive whole number; got ${this.substeps}`);
+    }
+
     const particles = this.seed();
-    let maxRadius = 0;
-    for (const p of particles) {
-      if (p.radius > maxRadius) maxRadius = p.radius;
-    }
-    if (particles.length === 0) {
-      throw new Error('seed returned no particles');
-    }
-    if (maxRadius === 0) {
-      throw new Error('seed returned only disabled particles (radius 0), so bins cannot be sized');
-    }
     this.particleCount = particles.length;
     // A bin must be at least as wide as the largest particle.
-    this.binSize = 2 * maxRadius;
+    this.binSize = 2 * largestRadius(particles);
 
     const data = packParticles(particles);
     this.particleBuffer = device.createBuffer({
@@ -173,18 +191,26 @@ export class Verlet {
       })
     );
 
-    this.computer = new VerletBinComputer(device, {
-      bounds: this.bounds,
-      binSize: this.binSize,
-      particleCount: this.particleCount,
-      particleBuffer: this.particleBuffer,
-      paramsBuffer: this.paramsBuffer
-    });
+    try {
+      this.computer = new VerletBinComputer(device, {
+        bounds: this.bounds,
+        binSize: this.binSize,
+        particleCount: this.particleCount,
+        particleBuffer: this.particleBuffer,
+        paramsBuffer: this.paramsBuffer
+      });
 
-    this.renderer = new VerletRenderer(device, {
-      projection: options.projection,
-      target: options.target
-    });
+      this.renderer = new VerletRenderer(device, {
+        projection: options.projection,
+        target: options.target
+      });
+    } catch (error) {
+      // Nothing outside holds a reference yet, so release what was created.
+      this.particleBuffer.destroy();
+      this.paramsBuffer.destroy();
+      this.computer?.destroy();
+      throw error;
+    }
   }
 
   /**
@@ -227,7 +253,7 @@ export class Verlet {
         `seed returned ${particles.length} particles; expected ${this.particleCount}`
       );
     }
-    if (particles.some((p) => 2 * p.radius > this.binSize)) {
+    if (2 * largestRadius(particles) > this.binSize) {
       throw new Error('seed returned a particle larger than the bins were sized for');
     }
     this.device.queue.writeBuffer(this.particleBuffer, 0, packParticles(particles));

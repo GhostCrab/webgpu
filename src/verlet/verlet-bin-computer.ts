@@ -66,7 +66,8 @@ export class VerletBinComputer {
   private particleCount: number;
   private pipelines: Record<Stage, GPUComputePipeline>;
   private bindGroups: GPUBindGroup[];
-  private ownedBuffers: GPUBuffer[];
+  private binParamsBuffer: GPUBuffer;
+  private csoBuffer: GPUBuffer;
 
   constructor(device: GPUDevice, options: BinComputerOptions) {
     this.particleCount = options.particleCount;
@@ -104,15 +105,15 @@ export class VerletBinComputer {
     }
 
     const { binSize, width, height, binCount } = this.grid;
-    const binParamsBuffer = device.createBuffer({
+    this.binParamsBuffer = device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
-    device.queue.writeBuffer(binParamsBuffer, 0, new Uint32Array([binSize, width, height, binCount]));
+    device.queue.writeBuffer(this.binParamsBuffer, 0, new Uint32Array([binSize, width, height, binCount]));
 
     // Collision step offset: which of the four interleaved sets of bins the
     // next collide pass covers. collideIncrement advances it on the GPU.
-    const csoBuffer = device.createBuffer({
+    this.csoBuffer = device.createBuffer({
       size: 8,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
     });
@@ -123,8 +124,6 @@ export class VerletBinComputer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
     });
 
-    this.ownedBuffers = [binParamsBuffer, csoBuffer, this.binBuffer];
-
     this.bindGroups = [
       device.createBindGroup({
         layout: groupLayouts[0],
@@ -132,14 +131,14 @@ export class VerletBinComputer {
       }),
       device.createBindGroup({
         layout: groupLayouts[1],
-        entries: [{ binding: 0, resource: { buffer: binParamsBuffer } }]
+        entries: [{ binding: 0, resource: { buffer: this.binParamsBuffer } }]
       }),
       device.createBindGroup({
         layout: groupLayouts[2],
         entries: [
           { binding: 0, resource: { buffer: options.particleBuffer } },
           { binding: 1, resource: { buffer: this.binBuffer } },
-          { binding: 2, resource: { buffer: csoBuffer } }
+          { binding: 2, resource: { buffer: this.csoBuffer } }
         ]
       })
     ];
@@ -208,6 +207,8 @@ export class VerletBinComputer {
   }
 
   destroy() {
-    this.ownedBuffers.forEach((buffer) => buffer.destroy());
+    this.binParamsBuffer.destroy();
+    this.csoBuffer.destroy();
+    this.binBuffer.destroy();
   }
 }

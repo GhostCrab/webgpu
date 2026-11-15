@@ -1,6 +1,9 @@
 #!/bin/sh
 # Guardrail: type-check and test before every commit. Enabled by `npm install`
 # (the prepare script points core.hooksPath here).
+#
+# It checks the working tree, not the staged snapshot: with a partial commit
+# (git add -p), stash the unstaged changes first if the difference matters.
 set -e
 
 # Vitest needs an upper-case drive letter on Windows; pwd -W gives one.

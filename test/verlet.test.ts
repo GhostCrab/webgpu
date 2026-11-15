@@ -55,6 +55,12 @@ describe.skipIf(!device)('seeding', () => {
     await expect(createSim([{ x: 0, y: 0, radius: 0 }])).rejects.toThrow('only disabled particles');
   });
 
+  test.each([NaN, -1, Infinity])('rejects a particle with radius %s', async (radius) => {
+    await expect(createSim([{ x: 0, y: 0 }, { x: 5, y: 5, radius }])).rejects.toThrow(
+      `particle with radius ${radius}`
+    );
+  });
+
   test('accepts far more particles than the default', async () => {
     const sim = await createSim(seededScatter(200000, 5));
     sim.step(1);

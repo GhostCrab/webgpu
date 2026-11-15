@@ -84,9 +84,10 @@ export function seededScatter(count: number, seed: number): TestParticle[] {
 // memory, so sims are released as soon as the test that made them ends.
 const live: (() => Promise<void>)[] = [];
 afterEach(async () => {
-  for (const dispose of live.splice(0)) {
-    await dispose();
-  }
+  // Every sim is released even when one reports an error.
+  const results = await Promise.allSettled(live.splice(0).map((dispose) => dispose()));
+  const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+  if (failed) throw failed.reason;
 });
 
 export async function createSim(particles: TestParticle[]): Promise<Sim | null> {
@@ -110,6 +111,15 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
     for (const error of await Promise.all(scopes.splice(0))) {
       if (error) throw new Error(`WebGPU validation error: ${error.message}`);
     }
+  }
+  // A readback creates a buffer and submits a copy before its first await, so
+  // starting it inside a scope covers those. A validation error is reported in
+  // preference to the opaque map failure it would cause.
+  async function checkedRead<T>(read: () => Promise<T>): Promise<T> {
+    const pending = checked(read);
+    pending.catch(() => {});
+    await settle();
+    return pending;
   }
 
   // The app's simulation space: 3840x2160, centre origin, y down.
@@ -173,10 +183,8 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
       }
     },
 
-    async read() {
-      const state = await verlet.readParticles();
-      await settle();
-      return state;
+    read() {
+      return checkedRead(() => verlet.readParticles());
     },
 
     reset() {
@@ -190,9 +198,10 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
         device.queue.submit([encoder.finish()]);
       });
 
-      const heads = new Int32Array(await readBuffer(device, verlet.computer.binBuffer));
-      const links = unpackBinLinks(await verlet.readParticleBuffer());
-      await settle();
+      const heads = new Int32Array(
+        await checkedRead(() => readBuffer(device, verlet.computer.binBuffer))
+      );
+      const links = unpackBinLinks(await checkedRead(() => verlet.readParticleBuffer()));
       return { heads, links };
     },
 
@@ -211,7 +220,7 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
 
         target.resize(width, height);
         const encoder = device.createCommandEncoder();
-        target.render(encoder, canvas.createView(), (pass) => verlet.draw(pass));
+        target.render(encoder, () => canvas.createView(), (pass) => verlet.draw(pass));
         encoder.copyTextureToBuffer({ texture: canvas }, { buffer: staging, bytesPerRow }, [
           width,
           height
@@ -220,12 +229,16 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
         return { canvas, staging };
       });
 
-      await staging.mapAsync(GPUMapMode.READ);
-      const bytes = new Uint8Array(staging.getMappedRange().slice(0));
-      staging.unmap();
-      staging.destroy();
-      canvas.destroy();
-      await settle();
+      let bytes: Uint8Array;
+      try {
+        await settle();
+        await staging.mapAsync(GPUMapMode.READ);
+        bytes = new Uint8Array(staging.getMappedRange().slice(0));
+        staging.unmap();
+      } finally {
+        staging.destroy();
+        canvas.destroy();
+      }
 
       const [r, b] = format === 'bgra8unorm' ? [2, 0] : [0, 2];
       return (x, y) => {

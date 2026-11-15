@@ -142,7 +142,7 @@ export default class Renderer {
 
       this.target.render(
         commandEncoder,
-        this.context.getCurrentTexture().createView(),
+        () => this.context.getCurrentTexture().createView(),
         (pass) => this.verlet.draw(pass)
       );
 

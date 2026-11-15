@@ -40,6 +40,9 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       }
 
       var startOtherIndex = bins[neighborIndex];
+      // Known: this compares a bin index, where the centre entry of the
+      // neighbourhood looks intended (GitHub issue #1). Changing it shifts the
+      // measured baselines in test/simulation.test.ts.
       if (neighborIndex == 4) {
         startOtherIndex = verletObjects[voIndex].binLink;
       }
