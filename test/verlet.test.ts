@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
+import type { Palette } from '../src/verlet/palette';
 import { getDevice } from './gpu';
 import { BOUNDS, createSim, mulberry32, RADIUS, seededScatter } from './sim-harness';
 
@@ -15,6 +16,17 @@ describe('scatter', () => {
     const b = scatter({ ...options, random: mulberry32(7) });
     expect(a).toEqual(b);
     expect(scatter({ ...options, random: mulberry32(8) })).not.toEqual(a);
+  });
+
+  test('gives every particle a shade of the palette it is given', () => {
+    const palette: Palette = { rgb: [1, 0.5, 0], fade: 0.5 };
+    const particles = scatter({ ...options, random: mulberry32(7), palette });
+    expect(new Set(particles.map((p) => p.rgb.join())).size).toBeGreaterThan(400);
+    for (const { rgb } of particles) {
+      expect(rgb[0]).toBe(1);
+      expect(rgb[1]).toBeGreaterThanOrEqual(0.5);
+      expect(rgb[1]).toBeLessThan(0.75);
+    }
   });
 
   test('places every particle inside the bounds with the given radius', () => {

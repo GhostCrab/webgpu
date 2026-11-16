@@ -1,7 +1,8 @@
 import { Camera, cameraProjection } from '../camera';
 import { checkSubstepRate } from '../clock';
-import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_RADIUS } from './capacity';
+import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_COUNT, SEED_RADIUS } from './capacity';
 import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
+import { Palette, randomPalette, shade } from './palette';
 import {
   packParams,
   PARAMS_BYTES,
@@ -16,26 +17,6 @@ export type { BinGridContents, EraseRegion, StageTimer } from './simulation-pipe
 
 export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_RADIUS } from './capacity';
 
-function lerp(a: number, b: number, alpha: number) {
-  return a + alpha * (b - a);
-}
-
-function HSVtoRGB(h: number, s: number, v: number): [number, number, number] {
-  const i = Math.floor(h * 6);
-  const f = h * 6 - i;
-  const p = v * (1 - s);
-  const q = v * (1 - f * s);
-  const t = v * (1 - (1 - f) * s);
-  switch (i % 6) {
-    case 0: return [v, t, p];
-    case 1: return [q, v, p];
-    case 2: return [p, v, t];
-    case 3: return [p, q, v];
-    case 4: return [t, p, v];
-    default: return [v, p, q];
-  }
-}
-
 export interface ScatterOptions {
   count: number;
   /** Particles are scattered over a square of this side, centred on the origin. */
@@ -43,24 +24,20 @@ export interface ScatterOptions {
   radius: number;
   /** Source of numbers in [0, 1). Defaults to Math.random. */
   random?: () => number;
+  /** The palette the particles are shades of. Defaults to a random one. */
+  palette?: Palette;
 }
 
 /**
  * The default starting state: a uniform scatter, each particle with a small
- * random velocity and a shade of one random hue.
+ * random velocity and a shade of one palette.
  */
 export function scatter(options: ScatterOptions): SeedParticle[] {
   const { count, bounds, radius } = options;
   // Starting speeds of up to this each way.
   const maxSpeedUnitsPerSecond = 360;
   const random = options.random ?? Math.random;
-
-  const hue = random();
-  let lerpStart = random();
-  let lerpEnd = random();
-  if (lerpEnd < lerpStart) {
-    [lerpStart, lerpEnd] = [lerpEnd, lerpStart];
-  }
+  const palette = options.palette ?? randomPalette(random);
 
   const particles: SeedParticle[] = [];
   for (let i = 0; i < count; i++) {
@@ -68,10 +45,32 @@ export function scatter(options: ScatterOptions): SeedParticle[] {
     const y = random() * bounds - bounds / 2;
     const vx = (0.5 - random()) * 2 * maxSpeedUnitsPerSecond;
     const vy = (0.5 - random()) * 2 * maxSpeedUnitsPerSecond;
-    const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, random()), 1);
+    const rgb = shade(palette, random);
     particles.push({ x, y, vx, vy, radius, rgb });
   }
   return particles;
+}
+
+export interface DefaultSeedOptions {
+  /** The capacity of the simulation being seeded. */
+  capacity: number;
+  /** Side of the square the particles are scattered over. */
+  bounds: number;
+  /** The palette the particles are shades of. Defaults to a random one. */
+  palette?: Palette;
+}
+
+/**
+ * The seeding a simulation uses unless it is given a seed: a scatter of
+ * SEED_COUNT particles of radius SEED_RADIUS, or the capacity if smaller.
+ */
+export function defaultSeed(options: DefaultSeedOptions): SeedParticle[] {
+  return scatter({
+    count: Math.min(SEED_COUNT, options.capacity),
+    bounds: options.bounds,
+    radius: SEED_RADIUS,
+    palette: options.palette
+  });
 }
 
 /**
@@ -179,8 +178,7 @@ export interface VerletOptions {
   capacity?: number;
   /**
    * Produces the starting particles, and is called again by reset(). It must
-   * return no more particles than the capacity. Defaults to a random scatter
-   * of 15,000 particles of radius SEED_RADIUS, or the capacity if smaller. Each
+   * return no more particles than the capacity. Defaults to defaultSeed. Each
    * particle's id is its index in what the seed returns.
    */
   seed?: () => SeedParticle[];
@@ -220,9 +218,7 @@ export class Verlet {
     this.bounds = options.bounds;
     this.capacity = options.capacity ?? DEFAULT_CAPACITY;
     this.seed =
-      options.seed ??
-      (() =>
-        scatter({ count: Math.min(15000, this.capacity), bounds: this.bounds, radius: SEED_RADIUS }));
+      options.seed ?? (() => defaultSeed({ capacity: this.capacity, bounds: this.bounds }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);

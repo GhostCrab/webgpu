@@ -10,6 +10,9 @@ A 2D simulation of many colliding balls inside a circle, computed on the GPU and
 One simulated ball, with a position, a velocity, a radius and a particle id. Its mass is proportional to its area. It also has a colour, which only drawing uses and which moves with it in memory.
 _Avoid_: Verlet object, object, ball
 
+**Palette**:
+The colour a group of particles share, with how far each particle's shade of it may fade toward white. Seeded and spawned particles take their colours from one.
+
 **Disabled particle**:
 A particle with radius 0, which neither collides nor draws.
 

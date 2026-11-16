@@ -9,7 +9,8 @@ import { Clock, frameRate } from './clock';
 import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
 import { SimulationControls } from './simulation-controls';
-import { Verlet } from './verlet/verlet';
+import { randomPalette } from './verlet/palette';
+import { defaultSeed, Verlet } from './verlet/verlet';
 
 const SIMULATION_SIZE = simulationSize(STARTING_BOUNDARY_RADIUS);
 
@@ -111,12 +112,22 @@ export default class Renderer {
     );
   }
 
-  /** A new simulation, at the capacity the controls hold. */
+  /**
+   * A new simulation, at the capacity the controls hold. Each seeding, the
+   * first and every reset, scatters shades of a new random palette, which
+   * spawned particles then take too.
+   */
   createSimulation(): Verlet {
+    const capacity = Math.round(this.controls.capacity);
     return new Verlet(this.device, {
       bounds: SIMULATION_SIZE,
       format: this.format,
-      capacity: Math.round(this.controls.capacity)
+      capacity,
+      seed: () => {
+        const palette = randomPalette();
+        this.controls.useSpawnPalette(palette);
+        return defaultSeed({ capacity, bounds: SIMULATION_SIZE, palette });
+      }
     });
   }
 
