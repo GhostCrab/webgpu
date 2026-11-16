@@ -18,7 +18,7 @@
 // The number of particles this erase marked.
 @group(3) @binding(1) var<storage, read_write> erased: atomic<u32>;
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn erase(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count || isErased(particles[i])) {
@@ -30,7 +30,7 @@ fn erase(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn append(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   let to = live.count + i;

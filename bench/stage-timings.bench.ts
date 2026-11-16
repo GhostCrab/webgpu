@@ -4,9 +4,10 @@ import '../test/gpu';
 import { createRequire } from 'module';
 import { it } from 'vitest';
 
+import { simulationSize, STARTING_BOUNDARY_RADIUS } from '../src/camera';
 import { DEFAULT_SUBSTEP_RATE } from '../src/clock';
 import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
-import { scatter, SimulationInput, Verlet } from '../src/verlet/verlet';
+import { scatter, SEED_RADIUS, SimulationInput, Verlet } from '../src/verlet/verlet';
 import { mulberry32 } from '../test/sim-harness';
 import { GpuStageTimer } from './gpu-stage-timer';
 import { BenchResult, formatTable, StageTime } from './stage-timings';
@@ -19,12 +20,12 @@ import { BenchResult, formatTable, StageTime } from './stage-timings';
 
 const PARTICLE_COUNTS = [15_000, 500_000, 1_000_000];
 // The app's simulation space and boundary circle.
-const BOUNDS = 2160;
-const CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
+const CONSTRAIN_RADIUS = STARTING_BOUNDARY_RADIUS;
+const BOUNDS = simulationSize(CONSTRAIN_RADIUS);
 // Every scene covers this share of the boundary circle's area, with radii no
-// larger than the app's 1.5, so that a million particles fit.
+// larger than the app's seed radius, so that a million particles fit.
 const FILL = 0.5;
-const MAX_RADIUS = 1.5;
+const MAX_RADIUS = SEED_RADIUS;
 // Three seconds of simulated time let the scatter fall and settle into a pile
 // first; while it is still collapsing, the cost of a substep keeps changing.
 const WARM_UP_SUBSTEPS = 3 * DEFAULT_SUBSTEP_RATE;

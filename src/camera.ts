@@ -1,4 +1,10 @@
 /**
+ * The boundary circle's starting radius. It alone sets the size of simulation
+ * space, which the camera fits to the canvas.
+ */
+export const STARTING_BOUNDARY_RADIUS = 1060;
+
+/**
  * The side of the square of simulation space a boundary circle of this radius
  * needs: its diameter plus a margin on each side of 1/53 of the radius, so the
  * circle does not touch the edge of the canvas (20 units at the default radius

@@ -3,7 +3,8 @@ import { getDevice } from './gpu';
 
 import { afterEach } from 'vitest';
 
-import { fitCamera, simulationSize } from '../src/camera';
+import { fitCamera, simulationSize, STARTING_BOUNDARY_RADIUS } from '../src/camera';
+import { SEED_RADIUS } from '../src/verlet/capacity';
 import { Particle, SeedParticle } from '../src/verlet/particle-layout';
 import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
 import { BinGridContents, DEFAULT_CAPACITY, scatter, Verlet } from '../src/verlet/verlet';
@@ -16,11 +17,10 @@ export type { BinGridContents };
  * constructed and driven stays in this file.
  */
 
-/** The app's starting boundary circle radius. */
-export const DEFAULT_CONSTRAIN_RADIUS = 1060;
-/** The side of simulation space for that radius: 2160. */
-export const BOUNDS = simulationSize(DEFAULT_CONSTRAIN_RADIUS);
-export const RADIUS = 1.5;
+/** The side of simulation space for the app's starting boundary circle: 2160. */
+export const BOUNDS = simulationSize(STARTING_BOUNDARY_RADIUS);
+/** The radius the app seeds and spawns particles with. */
+export const RADIUS = SEED_RADIUS;
 /** 20 substeps per 60 Hz frame: half the app's default substep rate. */
 export const SUBSTEP_RATE = 1200;
 // Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
@@ -71,6 +71,11 @@ export interface Sim {
    * read back. `count` stops counting them after that and a substep.
    */
   erase(x: number, y: number, radius: number): Promise<number>;
+  /**
+   * Releases the simulation's GPU resources before the test ends, as the app
+   * does when it restarts the simulation. Nothing may use it afterwards.
+   */
+  destroy(): void;
   /** Advances the simulation by a whole number of substeps. */
   step(substeps: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
@@ -179,7 +184,7 @@ export async function createSim(
     return pending;
   }
 
-  const boundaryRadius = options.boundaryRadius ?? DEFAULT_CONSTRAIN_RADIUS;
+  const boundaryRadius = options.boundaryRadius ?? STARTING_BOUNDARY_RADIUS;
   const bounds = simulationSize(boundaryRadius);
   const format = navigator.gpu.getPreferredCanvasFormat();
   const verlet = checked(
@@ -213,7 +218,11 @@ export async function createSim(
     },
 
     erase(x, y, radius) {
-      return checkedRead(() => verlet.erase([x, y], radius));
+      return checkedRead(() => verlet.erase({ center: [x, y], radius }));
+    },
+
+    destroy() {
+      verlet.destroy();
     },
 
     step(substeps, input = {}) {

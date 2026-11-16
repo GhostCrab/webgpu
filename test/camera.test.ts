@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 
-import { canvasToSimulation, fitCamera, simulationToCanvas } from '../src/camera';
+import {
+  canvasToSimulation,
+  fitCamera,
+  simulationToCanvas,
+  STARTING_BOUNDARY_RADIUS
+} from '../src/camera';
 
 const expectPoint = (actual: [number, number], expected: [number, number]) => {
   expect(actual[0]).toBeCloseTo(expected[0], 6);
@@ -47,7 +52,7 @@ describe('mapping the pointer into simulation space', () => {
   test('is the inverse of drawing', () => {
     for (const [width, height] of [[1600, 900], [900, 1600], [1920, 1080], [333, 777]]) {
       const camera = fitCamera(2160, width, height);
-      for (const point of [[0, 0], [-1060, 1060], [523.25, -17.5]] as [number, number][]) {
+      for (const point of [[0, 0], [-STARTING_BOUNDARY_RADIUS, STARTING_BOUNDARY_RADIUS], [523.25, -17.5]] as [number, number][]) {
         expectPoint(canvasToSimulation(camera, ...simulationToCanvas(camera, ...point)), point);
       }
     }

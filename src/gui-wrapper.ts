@@ -1,9 +1,6 @@
 import type { ClockTick } from './clock';
 import { SimulationControls } from './simulation-controls';
-import { MAX_RADIUS_RATIO } from './verlet/capacity';
-
-/** The radius the default seed gives every particle, and so the smallest to spawn. */
-const SEED_RADIUS = 1.5;
+import { MAX_RADIUS_RATIO, SEED_RADIUS } from './verlet/capacity';
 
 // lil-gui is loaded via CDN in index.html, so it has no type definitions here.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,9 +91,12 @@ export default class GuiWrapper {
     this.stats.particleCount = `${count} / ${capacity}`;
   }
 
-  /** Shows one frame's rate and the substeps it ran against those it wanted. */
-  updateFrame(fps: number, tick: ClockTick) {
-    this.stats.fps = fps.toFixed(1);
+  /**
+   * Shows one frame's rate and the substeps it ran against those it wanted.
+   * An unknown rate leaves the last one shown.
+   */
+  updateFrame(fps: number | null, tick: ClockTick) {
+    if (fps !== null) this.stats.fps = fps.toFixed(1);
     this.stats.substeps = `${tick.substeps} / ${tick.wanted}`;
   }
 

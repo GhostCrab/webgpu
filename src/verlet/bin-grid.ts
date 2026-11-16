@@ -36,10 +36,12 @@ export function sizeBinGrid({ bounds, largestRadius, minBinSize }: BinGridSizing
 
 // Values one workgroup of the scan covers; SCAN_BLOCK in bin-scan.wgsl.
 const SCAN_BLOCK = 256;
+// Bins one workgroup of clearBins clears; its @workgroup_size in bin-grid.wgsl.
+const CLEAR_WORKGROUP_SIZE = 256;
 // Workgroups per dispatch dimension, the WebGPU default limit.
 const MAX_WORKGROUPS = 65535;
 /** The most bins the grid can have: every bin-wide dispatch fits in one dimension. */
-export const MAX_BINS = MAX_WORKGROUPS * SCAN_BLOCK - 1;
+export const MAX_BINS = MAX_WORKGROUPS * Math.min(SCAN_BLOCK, CLEAR_WORKGROUP_SIZE) - 1;
 // Storage bindings must start at a multiple of this (the WebGPU default limit).
 const OFFSET_ALIGNMENT = 256;
 
@@ -316,7 +318,7 @@ export class BinGrid {
    * their colours in the buffer at binding 4, and they are the live particles.
    */
   stages(groups: BuildGroups): [string, (pass: GPUComputePassEncoder) => void][] {
-    const perBin = Math.ceil((this.grid.binCount + 1) / 256);
+    const perBin = Math.ceil((this.grid.binCount + 1) / CLEAR_WORKGROUP_SIZE);
     // Bins are dispatched directly; live particles indirectly, from their count.
     const run = (pass: GPUComputePassEncoder, stage: BuildStage, workgroups?: number) => {
       pass.setPipeline(this.pipelines[stage]);

@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
+import { STARTING_BOUNDARY_RADIUS } from '../src/camera';
+import { DEFAULT_SUBSTEP_RATE } from '../src/clock';
 import { SimulationControls } from '../src/simulation-controls';
 
-const controls = () => new SimulationControls({ constrainRadius: 1060 });
+const controls = () => new SimulationControls({ constrainRadius: STARTING_BOUNDARY_RADIUS });
 
 describe('click force', () => {
   test('is off, at the origin, until a button is pressed', () => {
@@ -98,7 +100,7 @@ describe('settings', () => {
     expect(controls().frameInput()).toMatchObject({
       collide: true,
       classicConstrain: false,
-      constrainRadius: 1060
+      constrainRadius: STARTING_BOUNDARY_RADIUS
     });
     expect(controls().paused).toBe(false);
   });
@@ -107,9 +109,9 @@ describe('settings', () => {
     expect(controls().capacity).toBe(50000);
   });
 
-  test('start at 2400 substeps per second, which the user can change', () => {
+  test('start at the default substep rate, which the user can change', () => {
     const c = controls();
-    expect(c.frameInput().substepRate).toBe(2400);
+    expect(c.frameInput().substepRate).toBe(DEFAULT_SUBSTEP_RATE);
     c.substepRate = 1200;
     expect(c.frameInput().substepRate).toBe(1200);
   });

@@ -15,7 +15,7 @@
 
 fn setLiveCount(count: u32) {
   liveOut.count = count;
-  liveOut.workgroupsX = (count + 63u) / 64u;
+  liveOut.workgroupsX = (count + PARTICLE_WORKGROUP_SIZE - 1u) / PARTICLE_WORKGROUP_SIZE;
   liveOut.instanceCount = count;
 }
 

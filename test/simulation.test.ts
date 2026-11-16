@@ -2,9 +2,10 @@ import { describe, expect, test } from 'vitest';
 
 import { getDevice } from './gpu';
 
+import { STARTING_BOUNDARY_RADIUS } from '../src/camera';
+
 import {
   createSim,
-  DEFAULT_CONSTRAIN_RADIUS,
   RADIUS,
   runStats,
   mulberry32,
@@ -151,7 +152,7 @@ describe.skipIf(!device)('a particle exactly at the click point', () => {
 });
 
 describe.skipIf(!device)('the boundary circle', () => {
-  const edge = DEFAULT_CONSTRAIN_RADIUS - RADIUS;
+  const edge = STARTING_BOUNDARY_RADIUS - RADIUS;
   // Just inside the bottom of the circle, moving down at 0.5 per substep.
   const falling = [{ x: 0, y: 1050, vy: perSecond(0.5) }];
 
@@ -304,7 +305,7 @@ describe.skipIf(!device)('several particles', () => {
       [
         { x: -100, y: 0, radius: 1 },
         { x: 0, y: 0, radius: RADIUS },
-        { x: 100, y: 0, radius: 6 }
+        { x: 100, y: 0, radius: 4 }
       ]
     );
     sim.step(FRAME);
@@ -430,7 +431,7 @@ describe.skipIf(!device)('collisions', () => {
     // Every particle inside the boundary circle, and none faster than the
     // speed limit: the smallest radius per substep.
     for (const p of settled) {
-      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(DEFAULT_CONSTRAIN_RADIUS - p.radius + 1e-3);
+      expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(STARTING_BOUNDARY_RADIUS - p.radius + 1e-3);
       expect(Math.hypot(p.vx, p.vy)).toBeLessThanOrEqual(smallest * PILE_RATE * (1 + 1e-5));
     }
     return runStats(settled);

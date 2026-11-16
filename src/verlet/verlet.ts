@@ -1,12 +1,20 @@
 import { Camera, cameraProjection } from '../camera';
-import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO } from './capacity';
+import { checkSubstepRate } from '../clock';
+import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_RADIUS } from './capacity';
 import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
-import { packParams, PARAMS_BYTES, Particle, SeedParticle } from './particle-layout';
-import { BinGridContents, SimulationPipeline, StageTimer } from './simulation-pipeline';
+import {
+  packParams,
+  PARAMS_BYTES,
+  Particle,
+  PARTICLE_BYTES,
+  PARTICLE_WORKGROUP_SIZE,
+  SeedParticle
+} from './particle-layout';
+import { BinGridContents, EraseRegion, SimulationPipeline, StageTimer } from './simulation-pipeline';
 
-export type { BinGridContents, StageTimer } from './simulation-pipeline';
+export type { BinGridContents, EraseRegion, StageTimer } from './simulation-pipeline';
 
-export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO } from './capacity';
+export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_RADIUS } from './capacity';
 
 function lerp(a: number, b: number, alpha: number) {
   return a + alpha * (b - a);
@@ -43,8 +51,8 @@ export interface ScatterOptions {
  */
 export function scatter(options: ScatterOptions): SeedParticle[] {
   const { count, bounds, radius } = options;
-  // Starting speeds of up to 360 units per second each way.
-  const maxSpeed = 360;
+  // Starting speeds of up to this each way.
+  const maxSpeedUnitsPerSecond = 360;
   const random = options.random ?? Math.random;
 
   const hue = random();
@@ -58,8 +66,8 @@ export function scatter(options: ScatterOptions): SeedParticle[] {
   for (let i = 0; i < count; i++) {
     const x = random() * bounds - bounds / 2;
     const y = random() * bounds - bounds / 2;
-    const vx = (0.5 - random()) * 2 * maxSpeed;
-    const vy = (0.5 - random()) * 2 * maxSpeed;
+    const vx = (0.5 - random()) * 2 * maxSpeedUnitsPerSecond;
+    const vy = (0.5 - random()) * 2 * maxSpeedUnitsPerSecond;
     const rgb = HSVtoRGB(hue, lerp(lerpStart, lerpEnd, random()), 1);
     particles.push({ x, y, vx, vy, radius, rgb });
   }
@@ -68,8 +76,8 @@ export function scatter(options: ScatterOptions): SeedParticle[] {
 
 /**
  * The smallest and largest radius among the enabled seeded particles. Rejects
- * a seed the simulation cannot size its buffers and bins from, naming what is
- * wrong with it.
+ * a seed the simulation cannot size its buffers and bins from, or whose radii
+ * are more than MAX_RADIUS_RATIO times apart, naming what is wrong with it.
  */
 function radiusRange(particles: SeedParticle[]): { smallest: number; largest: number } {
   if (particles.length === 0) {
@@ -87,7 +95,31 @@ function radiusRange(particles: SeedParticle[]): { smallest: number; largest: nu
   if (largest === 0) {
     throw new Error('seed returned only disabled particles (radius 0), so bins cannot be sized');
   }
+  if (largest > MAX_RADIUS_RATIO * smallest) {
+    throw new Error(
+      `seed returned radii from ${smallest} to ${largest}, more than ${MAX_RADIUS_RATIO} times apart`
+    );
+  }
   return { smallest, largest };
+}
+
+/** The device limits that bound the capacity. */
+export type CapacityLimits = Pick<
+  GPUSupportedLimits,
+  'maxStorageBufferBindingSize' | 'maxBufferSize' | 'maxComputeWorkgroupsPerDimension'
+>;
+
+/**
+ * The most particles a device with these limits can hold. Each per-particle
+ * buffer, the particle buffers the largest, is bound whole as storage, and a
+ * dispatch over the particles must fit in one dimension of workgroups.
+ */
+export function maxCapacity(limits: CapacityLimits): number {
+  const bufferBytes = Math.min(limits.maxStorageBufferBindingSize, limits.maxBufferSize);
+  return Math.min(
+    Math.floor(bufferBytes / PARTICLE_BYTES),
+    limits.maxComputeWorkgroupsPerDimension * PARTICLE_WORKGROUP_SIZE
+  );
 }
 
 /** Gives each particle its index as its particle id. */
@@ -148,7 +180,7 @@ export interface VerletOptions {
   /**
    * Produces the starting particles, and is called again by reset(). It must
    * return no more particles than the capacity. Defaults to a random scatter
-   * of 15,000 particles of radius 1.5, or the capacity if smaller. Each
+   * of 15,000 particles of radius SEED_RADIUS, or the capacity if smaller. Each
    * particle's id is its index in what the seed returns.
    */
   seed?: () => SeedParticle[];
@@ -178,6 +210,7 @@ export class Verlet {
   /** The particle id the next spawned particle takes. */
   private nextId: number;
   private totalTime = 0;
+  private destroyed = false;
 
   private paramsBuffer: GPUBuffer;
   private pipeline: SimulationPipeline;
@@ -189,13 +222,17 @@ export class Verlet {
     this.seed =
       options.seed ??
       (() =>
-        scatter({ count: Math.min(15000, this.capacity), bounds: this.bounds, radius: 1.5 }));
+        scatter({ count: Math.min(15000, this.capacity), bounds: this.bounds, radius: SEED_RADIUS }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);
     }
     if (!Number.isInteger(this.capacity) || this.capacity < 1) {
       throw new Error(`capacity must be a whole number, 1 or more; got ${this.capacity}`);
+    }
+    const most = maxCapacity(device.limits);
+    if (this.capacity > most) {
+      throw new Error(`capacity ${this.capacity} is more than this device can hold; at most ${most}`);
     }
 
     const particles = this.seededParticles();
@@ -259,9 +296,7 @@ export class Verlet {
       throw new Error(`substeps must be a whole number, 0 or more; got ${substeps}`);
     }
     const { substepRate } = input;
-    if (!(substepRate > 0) || !Number.isFinite(substepRate)) {
-      throw new Error(`substep rate must be a positive number; got ${substepRate}`);
-    }
+    checkSubstepRate(substepRate);
     if (substeps === 0) return;
 
     this.totalTime += substeps / substepRate;
@@ -368,15 +403,17 @@ export class Verlet {
   }
 
   /**
-   * Erases the particles whose centres are within `radius` of `center`, while
-   * the simulation runs. They are marked on the GPU, and the next bin grid
-   * build leaves them out.
+   * Erases the particles in the region, those whose centres are within its
+   * radius of its centre, while the simulation runs. They are marked on the
+   * GPU, and the next bin grid build leaves them out.
    *
    * It takes effect at once, so call it between submitted encoders, never
    * between step() and submitting its encoder. Nothing waits for it: it
-   * resolves with how many particles it erased once that has been read back.
+   * resolves with how many particles it erased once that has been read back,
+   * or with 0 if the simulation is destroyed first.
    */
-  erase(center: [number, number], radius: number): Promise<number> {
+  erase(region: EraseRegion): Promise<number> {
+    const { center, radius } = region;
     if (!center.every(Number.isFinite)) {
       throw new Error(`cannot erase around [${center}]; the centre must be finite`);
     }
@@ -385,16 +422,18 @@ export class Verlet {
     }
     const pending: PendingErase = { built: false };
     this.pendingErases.push(pending);
-    const erased = this.pipeline.erase(center, radius);
-    erased.then(
+    return this.pipeline.erase(region).then(
       (count) => {
         pending.erased = count;
         this.settleErases();
+        return count;
       },
-      // The simulation was destroyed first; there is nothing left to count.
-      () => {}
+      (error) => {
+        // Destroying the simulation abandons the readback; nothing is left to count.
+        if (this.destroyed) return 0;
+        throw error;
+      }
     );
-    return erased;
   }
 
   /** Counts out the particles of erases that are both read back and built. */
@@ -434,6 +473,7 @@ export class Verlet {
 
   /** Releases the GPU resources. The simulation cannot be used afterwards. */
   destroy() {
+    this.destroyed = true;
     this.paramsBuffer.destroy();
     this.pipeline.destroy();
   }

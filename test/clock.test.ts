@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { Clock } from '../src/clock';
+import { Clock, frameRate } from '../src/clock';
 
 describe('the clock', () => {
   test('turns elapsed time into substeps at the substep rate', () => {
@@ -62,5 +62,18 @@ describe('the clock', () => {
 
   test.each([0, -1200, NaN])('rejects a substep rate of %s', (rate) => {
     expect(() => new Clock().advance(1 / 60, rate)).toThrow('substep rate must be a positive number');
+  });
+});
+
+describe('the frame rate', () => {
+  test('is one over the time between frames', () => {
+    expect(frameRate(1 / 60)).toBeCloseTo(60, 9);
+    expect(frameRate(0.5)).toBe(2);
+  });
+
+  test('is unknown when two frames share a timestamp, or time runs backwards', () => {
+    expect(frameRate(0)).toBeNull();
+    expect(frameRate(-0.01)).toBeNull();
+    expect(frameRate(NaN)).toBeNull();
   });
 });

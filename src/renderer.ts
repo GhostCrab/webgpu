@@ -1,14 +1,17 @@
-import { Camera, canvasToSimulation, fitCamera, simulationSize } from './camera';
-import { Clock } from './clock';
+import {
+  Camera,
+  canvasToSimulation,
+  fitCamera,
+  simulationSize,
+  STARTING_BOUNDARY_RADIUS
+} from './camera';
+import { Clock, frameRate } from './clock';
 import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
 import { SimulationControls } from './simulation-controls';
 import { Verlet } from './verlet/verlet';
 
-// The boundary circle's starting radius. It alone sets the size of simulation
-// space, which the camera fits to the canvas.
-const BOUNDARY_RADIUS = 1060;
-const SIMULATION_SIZE = simulationSize(BOUNDARY_RADIUS);
+const SIMULATION_SIZE = simulationSize(STARTING_BOUNDARY_RADIUS);
 
 /** Owns the canvas and the frame loop, and wires the other modules together. */
 export default class Renderer {
@@ -19,6 +22,8 @@ export default class Renderer {
   device: GPUDevice;
   queue: GPUQueue;
   context: GPUCanvasContext;
+  /** The canvas's texture format, which the simulation draws in. */
+  format: GPUTextureFormat;
 
   running = true;
 
@@ -31,7 +36,7 @@ export default class Renderer {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.controls = new SimulationControls({ constrainRadius: BOUNDARY_RADIUS });
+    this.controls = new SimulationControls({ constrainRadius: STARTING_BOUNDARY_RADIUS });
   }
 
   // 🏎️ Start the rendering engine
@@ -69,13 +74,13 @@ export default class Renderer {
 
   // 🍱 Initialize resources (swapchain, the simulation, inputs)
   initializeResources() {
-    const format = navigator.gpu.getPreferredCanvasFormat();
+    this.format = navigator.gpu.getPreferredCanvasFormat();
 
     // ⛓️ Swapchain
     this.context = this.canvas.getContext('webgpu');
     this.context.configure({
       device: this.device,
-      format,
+      format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
       alphaMode: 'premultiplied'
     });
@@ -110,7 +115,7 @@ export default class Renderer {
   createSimulation(): Verlet {
     return new Verlet(this.device, {
       bounds: SIMULATION_SIZE,
-      format: navigator.gpu.getPreferredCanvasFormat(),
+      format: this.format,
       capacity: Math.round(this.controls.capacity)
     });
   }
@@ -141,7 +146,7 @@ export default class Renderer {
       // Erases and spawned particles reach the GPU before this frame's
       // substeps are encoded. Nothing waits for an erase's count.
       const erase = this.controls.frameErase();
-      if (erase) void this.verlet.erase(erase.center, erase.radius);
+      if (erase) void this.verlet.erase(erase);
       this.verlet.spawn(this.controls.frameSpawn(elapsed));
       const commandEncoder = this.device.createCommandEncoder();
 
@@ -150,7 +155,7 @@ export default class Renderer {
         ? { substeps: 0, wanted: 0 }
         : this.clock.advance(elapsed, input.substepRate);
       this.verlet.step(commandEncoder, tick.substeps, input);
-      this.gui.updateFrame(1 / elapsed, tick);
+      this.gui.updateFrame(frameRate(elapsed), tick);
       this.gui.updateParticles(this.verlet.particleCount, this.verlet.capacity);
 
       // A hidden or collapsed canvas has no area and nothing to draw to.

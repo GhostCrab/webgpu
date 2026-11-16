@@ -49,11 +49,16 @@ struct BinGridParams {
   binCount: u32,
 }
 
+// Invocations per workgroup of every dispatch of one invocation per particle.
+// particle-layout.ts reads it from here.
+const PARTICLE_WORKGROUP_SIZE = 64u;
+
 // The live particles: the first `count` of the particle buffer. The rest of
 // the buffer, up to capacity, is unused. The GPU keeps it: the bin grid build
 // sets it to the particles it placed, and spawning raises it. With it, the
-// arguments of an indirect dispatch of one invocation per live particle, 64 to
-// a workgroup, and of an indirect draw of one quad per live particle.
+// arguments of an indirect dispatch of one invocation per live particle,
+// PARTICLE_WORKGROUP_SIZE to a workgroup, and of an indirect draw of one quad
+// per live particle.
 struct LiveParticles {
   workgroupsX: u32,
   workgroupsY: u32,

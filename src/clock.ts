@@ -21,6 +21,13 @@ export const MAX_FRAME_TIME = 1 / 60;
 // as a whole one, so the shortfall does not drop a substep.
 const ROUNDING = 1e-6;
 
+/** Rejects a substep rate that is not a positive, finite number of substeps per second. */
+export function checkSubstepRate(substepRate: number) {
+  if (!(substepRate > 0) || !Number.isFinite(substepRate)) {
+    throw new Error(`substep rate must be a positive number; got ${substepRate}`);
+  }
+}
+
 /**
  * The clock: turns the time elapsed between frames into a whole number of
  * substeps, each covering 1 / substepRate seconds of simulated time. Time too
@@ -37,9 +44,7 @@ export class Clock {
    * rather than lurching forward.
    */
   advance(elapsed: number, substepRate: number): ClockTick {
-    if (!(substepRate > 0) || !Number.isFinite(substepRate)) {
-      throw new Error(`substep rate must be a positive number; got ${substepRate}`);
-    }
+    checkSubstepRate(substepRate);
     if (!(elapsed > 0) || !Number.isFinite(elapsed)) elapsed = 0;
 
     const whole = (time: number) => Math.floor(time * substepRate + ROUNDING);
@@ -49,4 +54,13 @@ export class Clock {
     this.carried = Math.max(0, owed - substeps / substepRate);
     return { substeps, wanted };
   }
+}
+
+/**
+ * Frames per second for a frame `elapsed` seconds after the last, or null
+ * when that is unknown: two frames that share a timestamp, or time that does
+ * not move forward.
+ */
+export function frameRate(elapsed: number): number | null {
+  return elapsed > 0 && Number.isFinite(elapsed) ? 1 / elapsed : null;
 }

@@ -4,7 +4,7 @@ import { getDevice } from './gpu';
 import { describe, expect, test } from 'vitest';
 
 import { BinGridSize, sizeBinGrid } from '../src/verlet/bin-grid';
-import { BinGridContents, BOUNDS, createSim, seededScatter, TestParticle } from './sim-harness';
+import { BinGridContents, BOUNDS, createSim, RADIUS, seededScatter } from './sim-harness';
 
 const device = await getDevice();
 
@@ -100,31 +100,33 @@ function expectBuilt(contents: BinGridContents, count: number) {
 }
 
 /**
- * A scatter with one large particle, so that bins are 100 units wide and hold
- * about 30 particles each: enough for the order threads finish in to vary.
+ * A scatter in bins 100 units wide, the smallest bin size set, so that each
+ * holds about 30 particles: enough for the order threads finish in to vary.
  */
-function crowdedBins(): TestParticle[] {
-  return [...seededScatter(15000, 99), { x: 0, y: 0, radius: 50 }];
+const CROWDED_BIN_SIZE = 100;
+function crowdedBins() {
+  return createSim(seededScatter(15000, 99), { minBinSize: CROWDED_BIN_SIZE });
 }
 
 describe.skipIf(!device)('the bin grid', () => {
   test('holds every particle once, grouped by bin and in particle id order within each bin', async () => {
-    const particles = crowdedBins();
-    const sim = await createSim(particles);
+    const sim = await crowdedBins();
     const contents = await sim.readBinGrid();
-    expect(contents.grid).toEqual(sizeBinGrid({ bounds: BOUNDS, largestRadius: 50, minBinSize: 100 }));
-    expectBuilt(contents, particles.length);
+    expect(contents.grid).toEqual(
+      sizeBinGrid({ bounds: BOUNDS, largestRadius: RADIUS, minBinSize: CROWDED_BIN_SIZE })
+    );
+    expectBuilt(contents, 15000);
   });
 
   test('gives the same order on repeated runs while particles move between bins', async () => {
     const runs = [];
     for (let run = 0; run < 2; run++) {
-      const sim = await createSim(crowdedBins());
+      const sim = await crowdedBins();
       // Three frames: the scatter's particles cross bins as they fall.
       sim.step(60);
       runs.push(await sim.readBinGrid());
     }
-    expectBuilt(runs[0], 15001);
+    expectBuilt(runs[0], 15000);
     expect(runs[1].particles).toEqual(runs[0].particles);
     expect(runs[1].binStarts).toEqual(runs[0].binStarts);
   });

@@ -12,6 +12,14 @@ import commonWGSL from './shaders/common.wgsl';
 
 const { structs } = makeShaderDataDefinitions(commonWGSL);
 
+/**
+ * Invocations per workgroup of every dispatch of one invocation per particle:
+ * PARTICLE_WORKGROUP_SIZE in common.wgsl, read from there.
+ */
+export const PARTICLE_WORKGROUP_SIZE = Number(
+  /const PARTICLE_WORKGROUP_SIZE = (\d+)u;/.exec(commonWGSL)[1]
+);
+
 /** One particle, as the simulation interface takes and returns it. */
 export interface Particle {
   /** Identifies the particle for its whole life, wherever it sits in memory. */
@@ -198,7 +206,7 @@ export const LIVE_DRAW_OFFSET = liveStruct.fields.indexCount.offset;
 export function packLiveParticles(count: number, indexCount: number): ArrayBuffer {
   const view = makeStructuredView(liveStruct);
   view.set({
-    workgroupsX: Math.ceil(count / 64),
+    workgroupsX: Math.ceil(count / PARTICLE_WORKGROUP_SIZE),
     workgroupsY: 1,
     workgroupsZ: 1,
     count,

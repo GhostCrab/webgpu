@@ -1,20 +1,14 @@
 import { DEFAULT_SUBSTEP_RATE, MAX_FRAME_TIME } from './clock';
-import { DEFAULT_CAPACITY } from './verlet/capacity';
+import { DEFAULT_CAPACITY, SEED_RADIUS } from './verlet/capacity';
 import { DEFAULT_COLLISION_SETTINGS } from './verlet/collision';
 import type { SeedParticle } from './verlet/particle-layout';
-import type { SimulationInput } from './verlet/verlet';
+import type { EraseRegion, SimulationInput } from './verlet/verlet';
 
 /** Spawned particles land within this many spawn radii of the pointer. */
 const SPAWN_SPREAD = 10;
 
 /** Which way a held mouse button drives the click force. */
 export type ClickButton = 'attract' | 'repel';
-
-/** One frame's erase: the particles whose centres are within `radius` of `center`. */
-export interface FrameErase {
-  center: [number, number];
-  radius: number;
-}
 
 /**
  * The simulation controls: the user-adjustable state of the simulation, and
@@ -54,7 +48,7 @@ export class SimulationControls {
   /** Particles spawned per second while the spawn key is held. */
   spawnRate = 600;
   /** Radius of each spawned particle. */
-  spawnRadius = 1.5;
+  spawnRadius = SEED_RADIUS;
   /** Colour of each spawned particle, each channel 0 to 1. */
   spawnColor: [number, number, number] = [1, 1, 1];
   /** Particles within this distance of the pointer are erased while the erase key is held. */
@@ -134,7 +128,7 @@ export class SimulationControls {
    * runs, the particles within the erase radius of the pointer; otherwise
    * nothing.
    */
-  frameErase(): FrameErase | null {
+  frameErase(): EraseRegion | null {
     if (!this.erasing || this.paused) return null;
     return { center: [...this.pointer], radius: this.eraseRadius };
   }

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import { getDevice } from './gpu';
 import { BOUNDS, createSim, mulberry32, RADIUS, seededScatter } from './sim-harness';
 
-const { scatter } = await import('../src/verlet/verlet');
+const { maxCapacity, scatter } = await import('../src/verlet/verlet');
 
 const device = await getDevice();
 
@@ -28,6 +28,36 @@ describe('scatter', () => {
   });
 });
 
+describe('the most particles a device can hold', () => {
+  // WebGPU's default limits.
+  const defaults = {
+    maxStorageBufferBindingSize: 134217728,
+    maxBufferSize: 268435456,
+    maxComputeWorkgroupsPerDimension: 65535
+  };
+
+  test('under the default limits, is as many as one dispatch of 64-wide workgroups covers', () => {
+    expect(maxCapacity(defaults)).toBe(65535 * 64);
+  });
+
+  test('is as many 24-byte particles as a storage binding holds, when that is fewer', () => {
+    expect(maxCapacity({ ...defaults, maxStorageBufferBindingSize: 24_000_000 })).toBe(1_000_000);
+  });
+
+  test('is as many 24-byte particles as a buffer holds, when that is fewer', () => {
+    expect(maxCapacity({ ...defaults, maxBufferSize: 2_400_000 })).toBe(100_000);
+  });
+});
+
+describe.skipIf(!device)('capacity', () => {
+  test('rejects a capacity the device cannot hold, naming the capacity', async () => {
+    const most = maxCapacity(device.limits);
+    await expect(createSim([{ x: 0, y: 0 }], { capacity: most + 1 })).rejects.toThrow(
+      `capacity ${most + 1} is more than this device can hold; at most ${most}`
+    );
+  });
+});
+
 describe.skipIf(!device)('seeding', () => {
   test('rejects a seed with no particles', async () => {
     await expect(createSim([])).rejects.toThrow('seed returned no particles');
@@ -41,6 +71,19 @@ describe.skipIf(!device)('seeding', () => {
     await expect(createSim([{ x: 0, y: 0 }, { x: 5, y: 5, radius }])).rejects.toThrow(
       `particle with radius ${radius}`
     );
+  });
+
+  test('accepts radii up to 4 times apart, and rejects radii further apart', async () => {
+    await expect(createSim([{ x: 0, y: 0, radius: 1.5 }, { x: 10, y: 0, radius: 6 }])).resolves.not.toBeNull();
+    await expect(createSim([{ x: 0, y: 0, radius: 1.5 }, { x: 10, y: 0, radius: 6.1 }])).rejects.toThrow(
+      'seed returned radii from 1.5 to 6.1, more than 4 times apart'
+    );
+  });
+
+  test('a disabled particle does not count toward the radius ratio', async () => {
+    await expect(
+      createSim([{ x: 0, y: 0, radius: 0 }, { x: 10, y: 0, radius: 6 }, { x: 20, y: 0, radius: 2 }])
+    ).resolves.not.toBeNull();
   });
 
   test('accepts far more particles than the default', async () => {

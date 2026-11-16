@@ -2,7 +2,7 @@
 
 // The boundary stage of a substep: the selected constrain, so that no substep
 // ends with a particle outside the boundary circle.
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count) {

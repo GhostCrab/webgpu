@@ -8,7 +8,7 @@ const CLICK_ACCELERATION = 1.5;
 
 // The first stage of a substep: gravity or the click force into velocity, the
 // speed limit, then position.
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count) {

@@ -1,6 +1,7 @@
 /**
- * The limits on what the simulation holds. A pure module, so the simulation
- * controls can use them without loading the simulation.
+ * The limits on what the simulation holds, and the radius of its default
+ * particles. A pure module, so the simulation controls can use them without
+ * loading the simulation.
  */
 
 /** The most particles a simulation holds at once unless it is told otherwise. */
@@ -11,3 +12,9 @@ export const DEFAULT_CAPACITY = 50000;
  * bounds how many particles a bin sized for the largest can hold.
  */
 export const MAX_RADIUS_RATIO = 4;
+
+/**
+ * The radius the default seed gives every particle, the starting spawn radius,
+ * and so the smallest radius the settings panel offers to spawn.
+ */
+export const SEED_RADIUS = 1.5;

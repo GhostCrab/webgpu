@@ -53,6 +53,14 @@ describe.skipIf(!device)('erasing', () => {
     sim.step(60);
     expect((await sim.read()).map((p) => p.id)).toEqual(survivors);
   });
+
+  test('an erase still pending when the simulation is destroyed resolves with 0', async () => {
+    // As when the app restarts the simulation while the erase key is held.
+    const sim = await createSim(seededScatter(2000, 9));
+    const erased = sim.erase(0, 0, 300);
+    sim.destroy();
+    await expect(erased).resolves.toBe(0);
+  });
 });
 
 describe.skipIf(!device)('spawning after erasing', () => {

@@ -33,6 +33,7 @@
 @group(2) @binding(3) var<storage, read_write> colors: array<u32>;
 @group(2) @binding(4) var<storage, read_write> sortedColors: array<u32>;
 
+// CLEAR_WORKGROUP_SIZE in bin-grid.ts.
 @compute @workgroup_size(256)
 fn clearBins(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x <= binGrid.binCount) {
@@ -40,7 +41,7 @@ fn clearBins(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn countBins(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count || isErased(particles[i])) {
@@ -49,7 +50,7 @@ fn countBins(@builtin(global_invocation_id) id: vec3<u32>) {
   binSlots[i] = atomicAdd(&binStarts[binIndex(particles[i].pos)], 1u);
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn writeKeys(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count || isErased(particles[i])) {
@@ -59,7 +60,7 @@ fn writeKeys(@builtin(global_invocation_id) id: vec3<u32>) {
   binKeys[start + binSlots[i]] = particles[i].id;
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn placeParticles(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count) {

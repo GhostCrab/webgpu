@@ -12,6 +12,7 @@ import {
   packParticles,
   Particle,
   PARTICLE_BYTES,
+  PARTICLE_WORKGROUP_SIZE,
   unpackLiveCount,
   unpackParticles,
   unpackParticlesInPlace
@@ -65,6 +66,12 @@ export interface SimulationPipelineOptions {
 
 function largestRadiusOf(particles: Particle[]): number {
   return particles.reduce((largest, p) => Math.max(largest, p.radius), 0);
+}
+
+/** A disc of simulation space to erase: the particles whose centres are within `radius` of `center`. */
+export interface EraseRegion {
+  center: [number, number];
+  radius: number;
 }
 
 /** What a bin grid build left behind, for tests of the build on its own. */
@@ -339,7 +346,7 @@ export class SimulationPipeline {
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginComputePass();
     this.setEditGroups(pass, this.editPipelines.append);
-    pass.dispatchWorkgroups(Math.ceil(particles.length / 64));
+    pass.dispatchWorkgroups(Math.ceil(particles.length / PARTICLE_WORKGROUP_SIZE));
     this.binGrid.encodeGrow(pass);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
@@ -349,14 +356,13 @@ export class SimulationPipeline {
   }
 
   /**
-   * Marks the live particles whose centres are within `radius` of `center`
-   * erased; the next bin grid build leaves them out. It submits its own work
+   * Marks the live particles in the region erased; the next bin grid build leaves them out. It submits its own work
    * and takes effect at once, so call it between submitted encoders. Resolves
    * with how many it marked, once that has been read back; nothing waits for
    * it.
    */
-  erase(center: [number, number], radius: number): Promise<number> {
-    this.writeEdit({ center, radius });
+  erase(region: EraseRegion): Promise<number> {
+    this.writeEdit(region);
     this.device.queue.writeBuffer(this.erasedBuffer, 0, new Uint32Array([0]));
 
     const readback = this.device.createBuffer({
@@ -389,7 +395,7 @@ export class SimulationPipeline {
     );
   }
 
-  private writeEdit(values: { center?: [number, number]; radius?: number; added?: number }) {
+  private writeEdit(values: Partial<EraseRegion> & { added?: number }) {
     this.device.queue.writeBuffer(
       this.editBuffer,
       0,

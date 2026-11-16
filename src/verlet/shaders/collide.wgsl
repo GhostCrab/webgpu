@@ -25,7 +25,7 @@
 // than a thousand contacts fits in an i32.
 const FIXED_STEPS_PER_BIN = 524288.0;
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= live.count) {
