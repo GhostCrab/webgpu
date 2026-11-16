@@ -4,7 +4,9 @@
       "Bash(gh issue create:*)",
       "Bash(gh issue comment:*)",
       "Bash(gh issue edit:*)",
-      "Bash(gh issue close:*)"
+      "Bash(gh issue close:*)",
+      "Bash(npm run prod-build:*)",
+      "Bash(npm run serve:*)"
     ]
   }
 }
