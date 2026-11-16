@@ -258,3 +258,18 @@ describe('erase', () => {
     expect(c.frameSpawn(1 / 60)).toEqual([]);
   });
 });
+
+describe('constrain radius range', () => {
+  test('reaches the starting radius, which is its maximum', () => {
+    const c = controls();
+    expect(c.constrainRadiusRange.max).toBe(STARTING_BOUNDARY_RADIUS);
+    expect(c.constrainRadius).toBeLessThanOrEqual(c.constrainRadiusRange.max);
+    expect(c.constrainRadius).toBeGreaterThanOrEqual(c.constrainRadiusRange.min);
+  });
+
+  test('keeps the starting radius as its maximum after the radius is lowered', () => {
+    const c = controls();
+    c.constrainRadius = 400;
+    expect(c.constrainRadiusRange.max).toBe(STARTING_BOUNDARY_RADIUS);
+  });
+});
