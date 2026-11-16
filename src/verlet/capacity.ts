@@ -13,6 +13,9 @@ export const DEFAULT_CAPACITY = 50000;
  */
 export const MAX_RADIUS_RATIO = 4;
 
+/** The most particles the default seed scatters; fewer if the capacity is less. */
+export const SEED_COUNT = 15000;
+
 /**
  * The radius the default seed gives every particle, the starting spawn radius,
  * and so the smallest radius the settings panel offers to spawn.

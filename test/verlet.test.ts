@@ -17,6 +17,17 @@ describe('scatter', () => {
     expect(scatter({ ...options, random: mulberry32(8) })).not.toEqual(a);
   });
 
+  test('gives every particle a shade of the palette it is given', () => {
+    const palette = { rgb: [1, 0.5, 0] as [number, number, number], fade: 0.5 };
+    const particles = scatter({ ...options, random: mulberry32(7), palette });
+    expect(new Set(particles.map((p) => p.rgb.join())).size).toBeGreaterThan(400);
+    for (const { rgb } of particles) {
+      expect(rgb[0]).toBe(1);
+      expect(rgb[1]).toBeGreaterThanOrEqual(0.5);
+      expect(rgb[1]).toBeLessThan(0.75);
+    }
+  });
+
   test('places every particle inside the bounds with the given radius', () => {
     const particles = scatter({ ...options, random: mulberry32(7) });
     expect(particles).toHaveLength(500);

@@ -1,6 +1,7 @@
 import { DEFAULT_SUBSTEP_RATE, MAX_FRAME_TIME } from './clock';
 import { DEFAULT_CAPACITY, SEED_RADIUS } from './verlet/capacity';
 import { DEFAULT_COLLISION_SETTINGS } from './verlet/collision';
+import { Palette, Rgb, shade } from './verlet/palette';
 import type { SeedParticle } from './verlet/particle-layout';
 import type { EraseRegion, SimulationInput } from './verlet/verlet';
 
@@ -58,8 +59,13 @@ export class SimulationControls {
   spawnRate = 600;
   /** Radius of each spawned particle. */
   spawnRadius = SEED_RADIUS;
-  /** Colour of each spawned particle, each channel 0 to 1. */
-  spawnColor: [number, number, number] = [1, 1, 1];
+  /**
+   * The colour spawned particles are shades of, each channel 0 to 1. Starts,
+   * and restarts at every seeding, as the seeded particles' colour.
+   */
+  spawnColor: Rgb = [1, 1, 1];
+  /** The furthest a spawned particle's shade is mixed toward white, 0 to 1. */
+  spawnFade = 0;
   /** Particles within this distance of the pointer are erased while the erase key is held. */
   eraseRadius = 30;
 
@@ -84,6 +90,12 @@ export class SimulationControls {
     this.random = options.random ?? Math.random;
   }
 
+  /** Spawned particles take shades of this palette: the one just seeded. */
+  useSpawnPalette(palette: Palette) {
+    this.spawnColor = [...palette.rgb];
+    this.spawnFade = palette.fade;
+  }
+
   /** The spawn key is pressed. */
   startSpawning() {
     this.spawning = true;
@@ -98,7 +110,7 @@ export class SimulationControls {
   /**
    * The particles to spawn this frame, `elapsed` seconds after the last: while
    * the spawn key is held and the simulation runs, the spawn rate's worth,
-   * at rest and spread around the pointer. Part of a particle is carried into
+   * at rest and spread around the pointer, each a shade of the spawn colour. Part of a particle is carried into
    * the next frame, and like the clock a frame counts at most 1/60 s.
    */
   frameSpawn(elapsed: number): SeedParticle[] {
@@ -120,7 +132,7 @@ export class SimulationControls {
         vx: 0,
         vy: 0,
         radius: this.spawnRadius,
-        rgb: [...this.spawnColor]
+        rgb: shade({ rgb: this.spawnColor, fade: this.spawnFade }, this.random)
       });
     }
     return particles;
