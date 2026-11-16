@@ -12,6 +12,7 @@
         "dev": "concurrently \"cross-env NODE_ENV=development ts-node webpack.ts --watch\" \"http-server\"",
         "prod": "concurrently \"cross-env NODE_ENV=production ts-node webpack.ts --watch\" \"http-server\"",
         "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts",
+        "deploy": "npm run prod-build && scp index.html p5s:/var/www/webgpu/ && scp dist/main.js p5s:/var/www/webgpu/dist/",
         "test": "vitest run --root .",
         "bench": "vitest run --root . --config vitest.bench.config.mts",
         "typecheck": "tsc --noEmit && tsc --noEmit -p test",

@@ -63,11 +63,16 @@ const compiler: webpack.Compiler = webpack(config);
 
 if (!argv.reduce((prev, cur) => prev || cur === '--watch', false)) {
     compiler.run((err, stats) => {
-        if (err) return console.error(err);
+        if (err) {
+            // A failed build exits non-zero, so `npm run deploy` stops here.
+            process.exitCode = 1;
+            return console.error(err);
+        }
         if (stats === undefined) {
           console.log("✔️ ERROR: NO STATS, NO ERROR?")
         } else {
           if (stats.hasErrors()) {
+              process.exitCode = 1;
               const statsJson = stats.toJson();
               console.log(
                   '❌' + ' · Error · ' + 'build failed:'
