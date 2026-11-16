@@ -10,6 +10,11 @@ A class that calls `createTexture` or `createBuffer` keeps a reference to the re
 **Values that size a GPU resource are validated where they enter the module.**
 A count, a dimension or a radius that ends up in a buffer size, a texture size, a dispatch count or a divisor is checked at the constructor or public method that receives it. The error names the caller's mistake ("seed returned no particles"), because the WebGPU error that follows otherwise names only a size.
 
+## Interfaces
+
+**A parameter whose unit or meaning changes gets a new name.**
+When a function keeps its signature but its argument starts to mean something else (frames become substeps, units per substep become units per second), rename the parameter, the function or the option, so every existing caller fails to compile and is read again. With the name unchanged, old callers still type-check and still pass while testing something else: a test that stepped one frame steps one substep.
+
 ## Tests
 
 **Test helpers call the app's functions.**

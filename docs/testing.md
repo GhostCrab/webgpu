@@ -44,6 +44,21 @@ The aggregate ranges in `simulation.test.ts` are measured values. Runs of one sc
 
 A claim about what the simulation does ("this particle ends outside the boundary circle") is a guess until it has run. Write a throwaway scenario through the harness in a new file under `test/`, run that one file, report what it printed, and delete the file unless it is becoming a real test. This applies to research and review as much as to implementation.
 
+## Seeing the app
+
+The harness draws to a texture, never to a page. A change to what the user sees or does (drawing, the camera, the pointer, a gesture, the settings panel) is checked in a browser as well:
+
+```bash
+npm run prod-build                 # writes dist/main.js
+npm run serve -- -p 8091 -c-1      # serves the repo root; pick a free port, -c-1 turns caching off
+```
+
+Open `http://localhost:8091` in a browser with WebGPU. In a worktree, run both commands there, on a port no other agent is using. Stop the server when done.
+
+Look for: particles fall, pile and stay inside the boundary circle; the click force, spawn (hold S) and erase (hold E) act at the pointer, also after the window is resized; the stats line shows substeps run against wanted; the console has no errors.
+
+Report what was seen. When no browser is available, report the check as not done; a passing test run does not stand in for it.
+
 ## Benchmark
 
 ```bash
