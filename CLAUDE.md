@@ -7,7 +7,7 @@ A GPU-driven 2D Verlet particle simulation running in WebGPU compute shaders. Co
 ## Where to look
 
 - `docs/architecture.md`: read before designing or changing anything under `src/`. Modules, their interfaces, the particle layout and the compute pipeline order.
-- `docs/testing.md`: read before writing or debugging a test, or to check a claim about behaviour by running it. The harness, and what can and cannot be asserted about a GPU simulation.
+- `docs/testing.md`: read before writing or debugging a test, after changing what the user sees or does (drawing, the pointer, a gesture, the settings panel), or to check a claim about behaviour by running it. The harness, and what can and cannot be asserted about a GPU simulation.
 - `GLOSSARY.md`: the project's terms. Use them in code, tests and issues.
 - `CODING_STANDARDS.md`: the rules a review enforces.
 
