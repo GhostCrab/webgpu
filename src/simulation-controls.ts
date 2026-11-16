@@ -63,7 +63,7 @@ export class SimulationControls {
    * The colour spawned particles are shades of, each channel 0 to 1. Starts,
    * and restarts at every seeding, as the seeded particles' colour.
    */
-  spawnColor: Rgb = [1, 1, 1];
+  spawnBaseColor: Rgb = [1, 1, 1];
   /** The furthest a spawned particle's shade is mixed toward white, 0 to 1. */
   spawnFade = 0;
   /** Particles within this distance of the pointer are erased while the erase key is held. */
@@ -92,7 +92,7 @@ export class SimulationControls {
 
   /** Spawned particles take shades of this palette: the one just seeded. */
   useSpawnPalette(palette: Palette) {
-    this.spawnColor = [...palette.rgb];
+    this.spawnBaseColor = [...palette.rgb];
     this.spawnFade = palette.fade;
   }
 
@@ -132,7 +132,7 @@ export class SimulationControls {
         vx: 0,
         vy: 0,
         radius: this.spawnRadius,
-        rgb: shade({ rgb: this.spawnColor, fade: this.spawnFade }, this.random)
+        rgb: shade({ rgb: this.spawnBaseColor, fade: this.spawnFade }, this.random)
       });
     }
     return particles;

@@ -15,7 +15,7 @@ import { BinGridContents, EraseRegion, SimulationPipeline, StageTimer } from './
 
 export type { BinGridContents, EraseRegion, StageTimer } from './simulation-pipeline';
 
-export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_COUNT, SEED_RADIUS } from './capacity';
+export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_RADIUS } from './capacity';
 
 export interface ScatterOptions {
   count: number;
@@ -49,6 +49,28 @@ export function scatter(options: ScatterOptions): SeedParticle[] {
     particles.push({ x, y, vx, vy, radius, rgb });
   }
   return particles;
+}
+
+export interface DefaultSeedOptions {
+  /** The capacity of the simulation being seeded. */
+  capacity: number;
+  /** Side of the square the particles are scattered over. */
+  bounds: number;
+  /** The palette the particles are shades of. Defaults to a random one. */
+  palette?: Palette;
+}
+
+/**
+ * The seeding a simulation uses unless it is given a seed: a scatter of
+ * SEED_COUNT particles of radius SEED_RADIUS, or the capacity if smaller.
+ */
+export function defaultSeed(options: DefaultSeedOptions): SeedParticle[] {
+  return scatter({
+    count: Math.min(SEED_COUNT, options.capacity),
+    bounds: options.bounds,
+    radius: SEED_RADIUS,
+    palette: options.palette
+  });
 }
 
 /**
@@ -156,8 +178,7 @@ export interface VerletOptions {
   capacity?: number;
   /**
    * Produces the starting particles, and is called again by reset(). It must
-   * return no more particles than the capacity. Defaults to a random scatter
-   * of 15,000 particles of radius SEED_RADIUS, or the capacity if smaller. Each
+   * return no more particles than the capacity. Defaults to defaultSeed. Each
    * particle's id is its index in what the seed returns.
    */
   seed?: () => SeedParticle[];
@@ -197,9 +218,7 @@ export class Verlet {
     this.bounds = options.bounds;
     this.capacity = options.capacity ?? DEFAULT_CAPACITY;
     this.seed =
-      options.seed ??
-      (() =>
-        scatter({ count: Math.min(SEED_COUNT, this.capacity), bounds: this.bounds, radius: SEED_RADIUS }));
+      options.seed ?? (() => defaultSeed({ capacity: this.capacity, bounds: this.bounds }));
 
     if (!(this.bounds > 0) || !Number.isFinite(this.bounds)) {
       throw new Error(`bounds must be a positive number; got ${this.bounds}`);

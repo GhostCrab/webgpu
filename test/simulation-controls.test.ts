@@ -160,7 +160,7 @@ describe('spawn', () => {
     const c = controls();
     c.spawnRate = 600;
     c.spawnRadius = 3;
-    c.spawnColor = [1, 0.5, 0];
+    c.spawnBaseColor = [1, 0.5, 0];
     c.movePointer(50, 60);
     c.startSpawning();
     const spawned = c.frameSpawn(FRAME);
@@ -174,7 +174,7 @@ describe('spawn', () => {
   test('after a seeding, the spawn colour is the seeded palette, and spawned particles are shades of it', () => {
     const c = controls();
     c.useSpawnPalette({ rgb: [1, 0.5, 0], fade: 0.5 });
-    expect(c.spawnColor).toEqual([1, 0.5, 0]);
+    expect(c.spawnBaseColor).toEqual([1, 0.5, 0]);
     c.startSpawning();
     const spawned = c.frameSpawn(FRAME);
     expect(new Set(spawned.map((p) => p.rgb.join())).size).toBe(spawned.length);
@@ -189,7 +189,7 @@ describe('spawn', () => {
   test('a colour the user picks keeps the seeded variation', () => {
     const c = controls();
     c.useSpawnPalette({ rgb: [1, 0.5, 0], fade: 0.5 });
-    c.spawnColor = [0, 0, 1];
+    c.spawnBaseColor = [0, 0, 1];
     c.startSpawning();
     const spawned = c.frameSpawn(FRAME);
     expect(new Set(spawned.map((p) => p.rgb.join())).size).toBe(spawned.length);

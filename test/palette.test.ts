@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { randomPalette, shade } from '../src/verlet/palette';
+import { randomPalette, Rgb, shade } from '../src/verlet/palette';
 import { mulberry32 } from './sim-harness';
 
 describe('a random palette', () => {
@@ -21,7 +21,7 @@ describe('a random palette', () => {
 });
 
 describe('a shade', () => {
-  const rgb: [number, number, number] = [1, 0.5, 0];
+  const rgb: Rgb = [1, 0.5, 0];
 
   test('is the colour itself when the palette has no fade', () => {
     expect(shade({ rgb, fade: 0 }, () => 0.9)).toEqual(rgb);

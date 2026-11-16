@@ -10,7 +10,7 @@ import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
 import { SimulationControls } from './simulation-controls';
 import { randomPalette } from './verlet/palette';
-import { scatter, SEED_COUNT, SEED_RADIUS, Verlet } from './verlet/verlet';
+import { defaultSeed, Verlet } from './verlet/verlet';
 
 const SIMULATION_SIZE = simulationSize(STARTING_BOUNDARY_RADIUS);
 
@@ -126,12 +126,7 @@ export default class Renderer {
       seed: () => {
         const palette = randomPalette();
         this.controls.useSpawnPalette(palette);
-        return scatter({
-          count: Math.min(SEED_COUNT, capacity),
-          bounds: SIMULATION_SIZE,
-          radius: SEED_RADIUS,
-          palette
-        });
+        return defaultSeed({ capacity, bounds: SIMULATION_SIZE, palette });
       }
     });
   }

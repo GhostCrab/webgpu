@@ -68,7 +68,7 @@ export default class GuiWrapper {
       .add(controls, 'spawnRadius', SEED_RADIUS, SEED_RADIUS * MAX_RADIUS_RATIO, 0.25)
       .name('Radius');
     // Every seeding sets the spawn colour to the seeded particles' colour.
-    spawn.addColor(controls, 'spawnColor').name('Colour').listen();
+    spawn.addColor(controls, 'spawnBaseColor').name('Colour').listen();
     spawn
       .add(controls, 'capacity', 1000, 2000000, 1000)
       .name('Capacity (restarts)')
