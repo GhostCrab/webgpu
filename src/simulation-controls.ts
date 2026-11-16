@@ -7,6 +7,9 @@ import type { EraseRegion, SimulationInput } from './verlet/verlet';
 /** Spawned particles land within this many spawn radii of the pointer. */
 const SPAWN_SPREAD = 10;
 
+/** The smallest constrain radius the settings panel offers. */
+const MIN_CONSTRAIN_RADIUS = 50;
+
 /** Which way a held mouse button drives the click force. */
 export type ClickButton = 'attract' | 'repel';
 
@@ -30,6 +33,12 @@ export class SimulationControls {
   clickLock = false;
   classicConstrain = false;
   constrainRadius: number;
+  /**
+   * The range the constrain radius can be set within. Its maximum is the
+   * starting radius: simulation space and the bin grid are sized from that
+   * radius once, so a larger boundary circle would reach past them.
+   */
+  readonly constrainRadiusRange: { min: number; max: number };
   /** Strength a click force takes when a button is pressed. */
   impulse = 2000;
   /** Substeps per second of simulated time: the simulation's accuracy. */
@@ -68,6 +77,10 @@ export class SimulationControls {
   /** `random`, a source of numbers in [0, 1), spreads spawned particles. Defaults to Math.random. */
   constructor(options: { constrainRadius: number; random?: () => number }) {
     this.constrainRadius = options.constrainRadius;
+    this.constrainRadiusRange = {
+      min: Math.min(MIN_CONSTRAIN_RADIUS, options.constrainRadius),
+      max: options.constrainRadius
+    };
     this.random = options.random ?? Math.random;
   }
 
