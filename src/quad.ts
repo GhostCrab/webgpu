@@ -1,3 +1,6 @@
+/** Indices that draw one quad. */
+export const QUAD_INDEX_COUNT = 6;
+
 export class Quad {
   vertexSize = 4 * 6;
   vertexCount = 6;
@@ -55,10 +58,14 @@ export class Quad {
     }
   }
 
-  render(passEncoder: GPURenderPassEncoder, count: number) {
+  /**
+   * Draws instanced quads, as many as the indirect indexed draw arguments at
+   * `offset` in `args` say, with QUAD_INDEX_COUNT indices each.
+   */
+  renderIndirect(passEncoder: GPURenderPassEncoder, args: GPUBuffer, offset: number) {
     passEncoder.setVertexBuffer(0, this.verticesBuffer);
     passEncoder.setIndexBuffer(this.indexBuffer, 'uint16');
-    passEncoder.drawIndexed(6, count);
+    passEncoder.drawIndexedIndirect(args, offset);
   }
 
   destroy() {

@@ -1,8 +1,9 @@
 import { readBuffer } from '../read-buffer';
-import { BIN_GRID_PARAMS_BYTES, packBinGridParams } from './particle-layout';
+import { BIN_GRID_PARAMS_BYTES, LIVE_DISPATCH_OFFSET, packBinGridParams } from './particle-layout';
 import { computeShaderSource } from './shader-source';
 import buildShaderCode from './shaders/bin-grid.wgsl';
 import scanShaderCode from './shaders/bin-scan.wgsl';
+import liveCountShaderCode from './shaders/live-count.wgsl';
 
 /** The bin grid: a dense grid of square bins over simulation space. */
 export interface BinGridSize {
@@ -76,43 +77,59 @@ export interface BinGridOptions {
   minBinSize: number;
   /** The largest radius among the starting particles. */
   largestRadius: number;
-  /** The number of starting particles. */
-  particleCount: number;
   /** The most particles the grid can hold; its per-particle buffers are allocated for it. */
   capacity: number;
+  /**
+   * The live particles (LiveParticles in common.wgsl), which every build reads
+   * and sets to the particles it placed. Needs STORAGE and INDIRECT usage.
+   */
+  live: GPUBuffer;
+  /** The edit uniform (Edit in common.wgsl), which grow reads. */
+  edit: GPUBuffer;
   /** Bind group layout 0: the simulation params uniform. */
   paramsLayout: GPUBindGroupLayout;
-  /** Bind group layout 2: the particles (binding 0) and the buffer they are sorted into (1). */
-  particlesLayout: GPUBindGroupLayout;
+  /**
+   * Bind group layout 2 for a build: the particles (binding 0) and the buffer
+   * they are sorted into (1), their colours (3) and the buffer those are moved
+   * into (4).
+   */
+  sortLayout: GPUBindGroupLayout;
 }
 
 /** The bind groups a build runs with. */
 export interface BuildGroups {
   params: GPUBindGroup;
-  /** The particles at binding 0, sorted into the buffer at binding 1. */
+  /** In the sort layout: the particles, and their colours, and where they are sorted into. */
   particles: GPUBindGroup;
 }
 
 /**
  * The bin grid, built by counting sort every substep (ADR-0003).
  * A build writes the particles into a second buffer in bin order, so each bin's
- * particles are one contiguous run, in particle id order (ADR-0001).
+ * particles are one contiguous run, in particle id order (ADR-0001). It leaves
+ * erased particles out and keeps the live count on the GPU: after a build, the
+ * live particles are the ones it placed.
  *
- * Its bind group (group 1) holds the bin grid uniform (binding 1) and the bin
- * starts (binding 2): bin `b`'s particles are those from `binStarts[b]` up to
- * `binStarts[b + 1]`.
+ * Its bind group (group 1) holds the bin grid uniform (binding 1), the bin
+ * starts (binding 2) and the live particles, read-only (binding 5): bin `b`'s
+ * particles are those from `binStarts[b]` up to `binStarts[b + 1]`. The build
+ * binds its own working buffers as well, in a group of its own; keeping them
+ * out of the readers' group keeps every stage within the default limit of 8
+ * storage buffers.
  */
 export class BinGrid {
   /** Bind group layout 1, for any stage that reads the bin grid. */
   readonly layout: GPUBindGroupLayout;
   readonly bindGroup: GPUBindGroup;
+  /** Group 1 for the build: the readers' bindings, and the slots (3) and keys (4). */
+  private buildGroup: GPUBindGroup;
 
   private device: GPUDevice;
   private bounds: number;
   private minBinSize: number;
-  /** The live particles, which a build reads. */
-  private particleCount = 0;
   private grid: BinGridSize;
+  private liveBuffer: GPUBuffer;
+  private editBuffer: GPUBuffer;
 
   private paramsBuffer: GPUBuffer;
   private startsBuffer: GPUBuffer;
@@ -126,6 +143,10 @@ export class BinGrid {
   /** Per level of the scan but the last: its values and their block totals. */
   private scanGroups: GPUBindGroup[] = [];
   private levels: number[] = [];
+  private liveCountLayout: GPUBindGroupLayout;
+  private liveCountPipelines: { countPlaced: GPUComputePipeline; grow: GPUComputePipeline };
+  /** The bin totals, the live particles and the edit uniform, for the live count. */
+  private liveCountGroup: GPUBindGroup;
 
   constructor(device: GPUDevice, options: BinGridOptions) {
     const { bounds, minBinSize, capacity } = options;
@@ -143,6 +164,8 @@ export class BinGrid {
     this.device = device;
     this.bounds = bounds;
     this.minBinSize = minBinSize;
+    this.liveBuffer = options.live;
+    this.editBuffer = options.edit;
 
     const storage = (size: number, usage = 0) =>
       device.createBuffer({ size, usage: GPUBufferUsage.STORAGE | usage });
@@ -163,20 +186,34 @@ export class BinGrid {
         buffer: { type }
       });
       this.layout = device.createBindGroupLayout({
-        entries: [entry(1, 'uniform'), entry(2, 'storage'), entry(3, 'storage'), entry(4, 'storage')]
+        entries: [entry(1, 'uniform'), entry(2, 'storage'), entry(5, 'read-only-storage')]
       });
-      this.bindGroup = device.createBindGroup({
-        layout: this.layout,
+      const readerEntries: GPUBindGroupEntry[] = [
+        { binding: 1, resource: { buffer: this.paramsBuffer } },
+        { binding: 2, resource: { buffer: this.startsBuffer } },
+        { binding: 5, resource: { buffer: this.liveBuffer } }
+      ];
+      this.bindGroup = device.createBindGroup({ layout: this.layout, entries: readerEntries });
+      const buildGroupLayout = device.createBindGroupLayout({
         entries: [
-          { binding: 1, resource: { buffer: this.paramsBuffer } },
-          { binding: 2, resource: { buffer: this.startsBuffer } },
+          entry(1, 'uniform'),
+          entry(2, 'storage'),
+          entry(3, 'storage'),
+          entry(4, 'storage'),
+          entry(5, 'read-only-storage')
+        ]
+      });
+      this.buildGroup = device.createBindGroup({
+        layout: buildGroupLayout,
+        entries: [
+          ...readerEntries,
           { binding: 3, resource: { buffer: this.slotsBuffer } },
           { binding: 4, resource: { buffer: this.keysBuffer } }
         ]
       });
 
       const buildLayout = device.createPipelineLayout({
-        bindGroupLayouts: [options.paramsLayout, this.layout, options.particlesLayout]
+        bindGroupLayouts: [options.paramsLayout, buildGroupLayout, options.sortLayout]
       });
       const buildModule = device.createShaderModule({ code: computeShaderSource(buildShaderCode) });
       this.pipelines = {} as Record<BuildStage, GPUComputePipeline>;
@@ -205,13 +242,33 @@ export class BinGrid {
         scanBlocks: scanPipeline('scanBlocks'),
         addBlockSums: scanPipeline('addBlockSums')
       };
+
+      this.liveCountLayout = device.createBindGroupLayout({
+        entries: [entry(2, 'read-only-storage'), entry(4, 'storage'), entry(5, 'uniform')]
+      });
+      const liveCountPipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [this.liveCountLayout]
+      });
+      const liveCountModule = device.createShaderModule({
+        code: computeShaderSource(liveCountShaderCode)
+      });
+      const liveCountPipeline = (entryPoint: string) =>
+        device.createComputePipeline({
+          label: `live count: ${entryPoint}`,
+          layout: liveCountPipelineLayout,
+          compute: { module: liveCountModule, entryPoint }
+        });
+      this.liveCountPipelines = {
+        countPlaced: liveCountPipeline('countPlaced'),
+        grow: liveCountPipeline('grow')
+      };
     } catch (error) {
       this.destroy();
       throw error;
     }
 
     this.grid = allocated;
-    this.resize(options.largestRadius, options.particleCount);
+    this.resize(options.largestRadius);
   }
 
   /** The grid's current size. */
@@ -219,20 +276,12 @@ export class BinGrid {
     return this.grid;
   }
 
-  /**
-   * Sizes the bins for the largest radius in use, and sets the number of live
-   * particles, which sit at the start of the particle buffer.
-   */
-  resize(largestRadius: number, particleCount: number) {
+  /** Sizes the bins for the largest radius in use. */
+  resize(largestRadius: number) {
     const grid = sizeBinGrid({ bounds: this.bounds, largestRadius, minBinSize: this.minBinSize });
     const resized = grid.binCount !== this.grid.binCount || this.levels.length === 0;
     this.grid = grid;
-    this.particleCount = particleCount;
-    this.device.queue.writeBuffer(
-      this.paramsBuffer,
-      0,
-      packBinGridParams({ ...this.grid, particleCount })
-    );
+    this.device.queue.writeBuffer(this.paramsBuffer, 0, packBinGridParams(this.grid));
     if (!resized) return;
 
     this.levels = scanLevels(this.grid.binCount + 1);
@@ -250,40 +299,68 @@ export class BinGrid {
         ]
       })
     );
+    this.liveCountGroup = this.device.createBindGroup({
+      layout: this.liveCountLayout,
+      entries: [
+        { binding: 2, resource: region(0) },
+        { binding: 4, resource: { buffer: this.liveBuffer } },
+        { binding: 5, resource: { buffer: this.editBuffer } }
+      ]
+    });
   }
 
   /**
    * The build, as named stages for timing. Each encodes its dispatches into a
    * compute pass and sets the bind groups they use. After the last, the
-   * particles sit in bin order in the buffer at binding 1 of `groups.particles`.
+   * particles sit in bin order in the buffer at binding 1 of `groups.particles`,
+   * their colours in the buffer at binding 4, and they are the live particles.
    */
   stages(groups: BuildGroups): [string, (pass: GPUComputePassEncoder) => void][] {
-    const perParticle = Math.ceil(this.particleCount / 64);
     const perBin = Math.ceil((this.grid.binCount + 1) / 256);
-    const run = (pass: GPUComputePassEncoder, stage: BuildStage, workgroups: number) => {
+    // Bins are dispatched directly; live particles indirectly, from their count.
+    const run = (pass: GPUComputePassEncoder, stage: BuildStage, workgroups?: number) => {
       pass.setPipeline(this.pipelines[stage]);
       pass.setBindGroup(0, groups.params);
-      pass.setBindGroup(1, this.bindGroup);
+      pass.setBindGroup(1, this.buildGroup);
       pass.setBindGroup(2, groups.particles);
-      pass.dispatchWorkgroups(workgroups);
+      if (workgroups === undefined) {
+        pass.dispatchWorkgroupsIndirect(this.liveBuffer, LIVE_DISPATCH_OFFSET);
+      } else {
+        pass.dispatchWorkgroups(workgroups);
+      }
     };
     return [
       [
         'bin count',
         (pass) => {
           run(pass, 'clearBins', perBin);
-          run(pass, 'countBins', perParticle);
+          run(pass, 'countBins');
         }
       ],
       ['bin scan', (pass) => this.encodeScan(pass)],
       [
         'bin place',
         (pass) => {
-          run(pass, 'writeKeys', perParticle);
-          run(pass, 'placeParticles', perParticle);
+          run(pass, 'writeKeys');
+          run(pass, 'placeParticles');
+          this.encodeLiveCount(pass, 'countPlaced');
         }
       ]
     ];
+  }
+
+  /**
+   * After spawned particles are appended after the live ones: raises the live
+   * count by the edit uniform's `added`, up to its `capacity`.
+   */
+  encodeGrow(pass: GPUComputePassEncoder) {
+    this.encodeLiveCount(pass, 'grow');
+  }
+
+  private encodeLiveCount(pass: GPUComputePassEncoder, entryPoint: 'countPlaced' | 'grow') {
+    pass.setPipeline(this.liveCountPipelines[entryPoint]);
+    pass.setBindGroup(0, this.liveCountGroup);
+    pass.dispatchWorkgroups(1);
   }
 
   /** Turns the bin counts into bin starts: a blocked exclusive prefix sum. */

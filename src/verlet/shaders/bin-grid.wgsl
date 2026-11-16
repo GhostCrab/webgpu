@@ -5,13 +5,18 @@
 //   countBins       count the particles in each bin
 //   (the blocked scan in bin-scan.wgsl turns the counts into bin starts)
 //   writeKeys       list each bin's particle ids in its run of binKeys
-//   placeParticles  copy each particle to its place in sortedParticles
+//   placeParticles  copy each particle, and its colour, to its place in
+//                   sortedParticles
+//   (countPlaced in live-count.wgsl makes the particles placed the live ones)
 //
 // Afterwards each bin's particles are one contiguous run of sortedParticles,
 // from binStarts[bin] up to binStarts[bin + 1], in particle id order. The
 // order never depends on thread timing (ADR-0001): the atomic counts decide
 // only where an id is listed in binKeys, and a particle's place is its rank
 // by id among the ids listed for its bin.
+//
+// Erased particles are not counted, listed or placed, so the build leaves
+// them out.
 
 // One count per bin, plus one more. After the scan, the start of each bin's
 // run, and in the last entry the number of particles.
@@ -24,6 +29,9 @@
 
 @group(2) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(2) @binding(1) var<storage, read_write> sortedParticles: array<Particle>;
+// Each particle's colour, at the same place as the particle.
+@group(2) @binding(3) var<storage, read_write> colors: array<u32>;
+@group(2) @binding(4) var<storage, read_write> sortedColors: array<u32>;
 
 @compute @workgroup_size(256)
 fn clearBins(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -35,7 +43,7 @@ fn clearBins(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn countBins(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= binGrid.particleCount) {
+  if (i >= live.count || isErased(particles[i])) {
     return;
   }
   binSlots[i] = atomicAdd(&binStarts[binIndex(particles[i].pos)], 1u);
@@ -44,7 +52,7 @@ fn countBins(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn writeKeys(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= binGrid.particleCount) {
+  if (i >= live.count || isErased(particles[i])) {
     return;
   }
   let start = atomicLoad(&binStarts[binIndex(particles[i].pos)]);
@@ -54,10 +62,13 @@ fn writeKeys(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn placeParticles(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= binGrid.particleCount) {
+  if (i >= live.count) {
     return;
   }
   let p = particles[i];
+  if (isErased(p)) {
+    return;
+  }
   let bin = binIndex(p.pos);
   let start = atomicLoad(&binStarts[bin]);
   let end = atomicLoad(&binStarts[bin + 1u]);
@@ -68,4 +79,5 @@ fn placeParticles(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   sortedParticles[start + rank] = p;
+  sortedColors[start + rank] = colors[i];
 }

@@ -10,6 +10,12 @@ const SPAWN_SPREAD = 10;
 /** Which way a held mouse button drives the click force. */
 export type ClickButton = 'attract' | 'repel';
 
+/** One frame's erase: the particles whose centres are within `radius` of `center`. */
+export interface FrameErase {
+  center: [number, number];
+  radius: number;
+}
+
 /**
  * The simulation controls: the user-adjustable state of the simulation, and
  * the rules that turn pointer and button actions into simulation input.
@@ -19,6 +25,8 @@ export type ClickButton = 'attract' | 'repel';
  *
  * Spawning is its own gesture, separate from the click force: while the spawn
  * key is held, particles are spawned around the pointer at the spawn rate.
+ * Erasing is another: while the erase key is held, the particles within the
+ * erase radius of the pointer are erased, every frame.
  */
 export class SimulationControls {
   // Settings. The settings panel reads and writes these directly.
@@ -49,6 +57,8 @@ export class SimulationControls {
   spawnRadius = 1.5;
   /** Colour of each spawned particle, each channel 0 to 1. */
   spawnColor: [number, number, number] = [1, 1, 1];
+  /** Particles within this distance of the pointer are erased while the erase key is held. */
+  eraseRadius = 30;
 
   private pointer: [number, number] = [0, 0];
   private held: Record<ClickButton, boolean> = { attract: false, repel: false };
@@ -56,6 +66,7 @@ export class SimulationControls {
   private clickPoint: [number, number] = [0, 0];
   private clickForce = 0;
   private spawning = false;
+  private erasing = false;
   /** Part of a particle owed to the next frame's spawn. */
   private spawnOwed = 0;
   private random: () => number;
@@ -106,6 +117,26 @@ export class SimulationControls {
       });
     }
     return particles;
+  }
+
+  /** The erase key is pressed. */
+  startErasing() {
+    this.erasing = true;
+  }
+
+  /** The erase key is released. */
+  stopErasing() {
+    this.erasing = false;
+  }
+
+  /**
+   * What to erase this frame: while the erase key is held and the simulation
+   * runs, the particles within the erase radius of the pointer; otherwise
+   * nothing.
+   */
+  frameErase(): FrameErase | null {
+    if (!this.erasing || this.paused) return null;
+    return { center: [...this.pointer], radius: this.eraseRadius };
   }
 
   /** The pointer's position in simulation space. */

@@ -5,8 +5,21 @@ import shaderCode from './shaders/particle-disc.wgsl';
 export interface VerletRendererOptions {
   /** Format of the canvas the particles are drawn to. */
   format: GPUTextureFormat;
-  /** One colour per particle, at its particle id. */
-  colorBuffer: GPUBuffer;
+  /**
+   * The two colour buffers, one paired with each particle buffer: each holds
+   * every particle's colour at the same place as the particle.
+   */
+  colorBuffers: [GPUBuffer, GPUBuffer];
+}
+
+/** What to draw: the particles, their colours, and how many are live. */
+export interface DrawnParticles {
+  particles: GPUBuffer;
+  /** Which of the colour buffers holds their colours. */
+  colors: 0 | 1;
+  /** Indirect indexed draw arguments at `drawOffset`, one instance per live particle. */
+  live: GPUBuffer;
+  drawOffset: number;
 }
 
 /**
@@ -16,7 +29,8 @@ export interface VerletRendererOptions {
 export class VerletRenderer {
   private device: GPUDevice;
   private pipeline: GPURenderPipeline;
-  private bindGroup: GPUBindGroup;
+  /** Per colour buffer. */
+  private bindGroups: [GPUBindGroup, GPUBindGroup];
   private projectionBuffer: GPUBuffer;
   private quad: Quad;
 
@@ -36,13 +50,15 @@ export class VerletRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
-    this.bindGroup = device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.projectionBuffer } },
-        { binding: 1, resource: { buffer: options.colorBuffer } }
-      ]
-    });
+    const bindGroup = (colorBuffer: GPUBuffer) =>
+      device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.projectionBuffer } },
+          { binding: 1, resource: { buffer: colorBuffer } }
+        ]
+      });
+    this.bindGroups = [bindGroup(options.colorBuffers[0]), bindGroup(options.colorBuffers[1])];
 
     const shaderModule = device.createShaderModule({ code: shaderCode });
 
@@ -54,7 +70,7 @@ export class VerletRenderer {
         buffers: [
           // quad buffer layout takes locations 0 - 1
           this.quad.getBufferDescription(),
-          particleInstanceLayout(2, 3, 4)
+          particleInstanceLayout(2, 3)
         ]
       },
       fragment: {
@@ -88,8 +104,7 @@ export class VerletRenderer {
     encoder: GPUCommandEncoder,
     view: GPUTextureView,
     projection: Float32Array<ArrayBuffer>,
-    particleBuffer: GPUBuffer,
-    count: number
+    drawn: DrawnParticles
   ) {
     this.device.queue.writeBuffer(this.projectionBuffer, 0, projection);
 
@@ -99,9 +114,9 @@ export class VerletRenderer {
       ]
     });
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    pass.setVertexBuffer(1, particleBuffer);
-    this.quad.render(pass, count);
+    pass.setBindGroup(0, this.bindGroups[drawn.colors]);
+    pass.setVertexBuffer(1, drawn.particles);
+    this.quad.renderIndirect(pass, drawn.live, drawn.drawOffset);
     pass.end();
   }
 

@@ -65,6 +65,12 @@ export interface Sim {
    * simulation's capacity. Returns how many were added.
    */
   spawn(particles: TestParticle[]): number;
+  /**
+   * Erases the particles whose centres are within `radius` of (x, y). It takes
+   * effect at once; it resolves with how many it erased once that has been
+   * read back. `count` stops counting them after that and a substep.
+   */
+  erase(x: number, y: number, radius: number): Promise<number>;
   /** Advances the simulation by a whole number of substeps. */
   step(substeps: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
@@ -204,6 +210,10 @@ export async function createSim(
 
     spawn(spawned) {
       return checked(() => verlet.spawn(spawned.map(toSeedParticle)));
+    },
+
+    erase(x, y, radius) {
+      return checkedRead(() => verlet.erase([x, y], radius));
     },
 
     step(substeps, input = {}) {

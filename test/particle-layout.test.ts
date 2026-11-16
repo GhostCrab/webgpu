@@ -78,9 +78,9 @@ describe('the particle', () => {
   });
 
   test('the instance layout strides over whole particles', () => {
-    const layout = particleInstanceLayout(2, 3, 4);
+    const layout = particleInstanceLayout(2, 3);
     expect(layout.arrayStride).toBe(PARTICLE_BYTES);
     expect(layout.stepMode).toBe('instance');
-    expect([...layout.attributes].map((a) => a.shaderLocation)).toEqual([2, 3, 4]);
+    expect([...layout.attributes].map((a) => a.shaderLocation)).toEqual([2, 3]);
   });
 });

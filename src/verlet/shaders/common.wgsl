@@ -26,13 +26,15 @@ struct Params {
   unused3: f32,
 };
 
-// A particle. Its colour is not here: it lives in a buffer of its own, indexed
-// by particle id, that only drawing reads.
+// A particle. Its colour is not here: it lives in a buffer of its own, at the
+// same place as the particle, that the bin grid build moves with it and only
+// drawing reads.
 struct Particle {
   pos: vec2<f32>,
   // In simulation units per second.
   vel: vec2<f32>,
-  // 0 disables the particle: it does not draw.
+  // 0 disables the particle: it does not draw. Less than 0 marks it erased:
+  // it does not draw, and the next bin grid build leaves it out.
   radius: f32,
   // Identifies the particle for its whole life, wherever it sits in memory.
   id: u32,
@@ -45,13 +47,43 @@ struct BinGridParams {
   width: u32,
   height: u32,
   binCount: u32,
-  // The live particles: the first particleCount of the particle buffer. The
-  // rest of the buffer, up to capacity, is unused.
-  particleCount: u32,
+}
+
+// The live particles: the first `count` of the particle buffer. The rest of
+// the buffer, up to capacity, is unused. The GPU keeps it: the bin grid build
+// sets it to the particles it placed, and spawning raises it. With it, the
+// arguments of an indirect dispatch of one invocation per live particle, 64 to
+// a workgroup, and of an indirect draw of one quad per live particle.
+struct LiveParticles {
+  workgroupsX: u32,
+  workgroupsY: u32,
+  workgroupsZ: u32,
+  count: u32,
+  indexCount: u32,
+  instanceCount: u32,
+  firstIndex: u32,
+  baseVertex: i32,
+  firstInstance: u32,
+}
+
+// What one spawn or erase asks of the GPU.
+struct Edit {
+  // Erase: the particles whose centres are within `radius` of `center`.
+  center: vec2<f32>,
+  radius: f32,
+  // Spawn: the particles added after the live ones, and the most there may be.
+  added: u32,
+  capacity: u32,
 }
 
 @group(0) @binding(1) var<uniform> params: Params;
 @group(1) @binding(1) var<uniform> binGrid: BinGridParams;
+@group(1) @binding(5) var<storage, read> live: LiveParticles;
+
+// An erased particle, which the next bin grid build leaves out.
+fn isErased(p: Particle) -> bool {
+  return p.radius < 0.0;
+}
 
 // The bin a position falls in, as x and y. A position outside
 // the grid, or not finite, is placed in an edge bin, so it can never index

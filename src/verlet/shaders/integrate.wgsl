@@ -11,7 +11,7 @@ const CLICK_ACCELERATION = 1.5;
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
-  if (i >= binGrid.particleCount) {
+  if (i >= live.count) {
     return;
   }
 

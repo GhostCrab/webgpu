@@ -11,6 +11,7 @@ export interface InputBindingOptions {
 /**
  * Drives the simulation controls from the mouse and keyboard:
  * left button attracts, right button repels, holding S spawns at the pointer,
+ * holding E erases at the pointer,
  * R resets, C toggles collision, T the constrain mode, P pause, L click lock.
  *
  * Returns a function to call once per frame.
@@ -26,6 +27,7 @@ export function bindInputs(controls: SimulationControls, options: InputBindingOp
   inputs.bind('LMB', 'Mouse1');
   inputs.bind('RMB', 'Mouse3');
   inputs.bind('spawn', 'KeyS');
+  inputs.bind('erase', 'KeyE');
   inputs.bind('reset', 'KeyR');
   inputs.bind('collideToggle', 'KeyC');
   inputs.bind('classicConstrainToggle', 'KeyT');
@@ -42,6 +44,8 @@ export function bindInputs(controls: SimulationControls, options: InputBindingOp
   inputs.up.on('RMB', () => controls.release('repel'));
   inputs.down.on('spawn', () => controls.startSpawning());
   inputs.up.on('spawn', () => controls.stopSpawning());
+  inputs.down.on('erase', () => controls.startErasing());
+  inputs.up.on('erase', () => controls.stopErasing());
 
   inputs.down.on('collideToggle', () => controls.toggle('collide'));
   inputs.down.on('pauseToggle', () => controls.toggle('paused'));

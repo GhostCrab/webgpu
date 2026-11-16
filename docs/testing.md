@@ -22,6 +22,7 @@ npx vitest run -t "falls under gravity"       # tests matching a name
 - `readBinGrid()` runs one bin grid build on its own and returns the particles in the order they sit in memory, with each bin's start; `test/bin-grid.test.ts` checks builds through it. The GPU computes bins in 32-bit floats, so a particle within a hair of a bin edge may sit in either bin; those checks allow for it.
 - `createSim(particles, { minBinSize })` sets the smallest bin size, for tests of large bin grids.
 - `sim.spawn(particles)` spawns particles and returns how many were added; `sim.count` is the live count. `createSim(particles, { capacity })` sets the capacity, which otherwise is the app's or the seed's size if larger. `test/spawn.test.ts` covers spawning.
+- `sim.erase(x, y, radius)` erases the particles whose centres are within `radius` of (x, y), at once, and resolves with how many it erased. `sim.count` counts them out only after that resolves and a substep has run, so await the erase and step before asserting on it. `test/erase.test.ts` covers erasing, and spawning after it.
 - It runs every GPU operation inside a validation error scope and checks the scopes when a test reads a result and when the test ends, so a WebGPU validation error fails the test that caused it.
 - It destroys each sim's GPU resources when its test ends.
 - `createSim(particles, { boundaryRadius })` sizes simulation space from a boundary circle radius other than the app's; it is also the default constrain radius of every step.

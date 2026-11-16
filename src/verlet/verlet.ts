@@ -116,6 +116,14 @@ export interface SimulationInput extends CollisionSettings {
   substepRate: number;
 }
 
+/** An erase whose particles the CPU does not yet know are gone. */
+interface PendingErase {
+  /** How many it marked, once read back. */
+  erased?: number;
+  /** Whether a bin grid build has been encoded since, which removes them. */
+  built: boolean;
+}
+
 export interface VerletOptions {
   /**
    * Side of the square region of simulation space that particles may occupy,
@@ -159,8 +167,14 @@ export class Verlet {
   private seed: () => SeedParticle[];
   /** The smallest and largest radius seeded or spawned since the last seeding. */
   private radii: { smallest: number; largest: number };
-  /** The live particles. */
+  /**
+   * At least as many as the live particles: the particles seeded and spawned,
+   * less those erased once their count has been read back and a bin grid
+   * build has removed them. The GPU keeps the exact count.
+   */
   private liveCount: number;
+  /** Erases whose particles still count in liveCount. */
+  private pendingErases: PendingErase[] = [];
   /** The particle id the next spawned particle takes. */
   private nextId: number;
   private totalTime = 0;
@@ -272,6 +286,9 @@ export class Verlet {
     for (let i = 0; i < substeps; i++) {
       this.pipeline.encodeSubstep(encoder, input.collide, timer);
     }
+    // Every substep builds the bin grid, which removes erased particles.
+    this.pendingErases.forEach((pending) => (pending.built = true));
+    this.settleErases();
   }
 
   /**
@@ -283,7 +300,11 @@ export class Verlet {
     this.pipeline.draw(encoder, view, cameraProjection(camera));
   }
 
-  /** The number of live particles. */
+  /**
+   * The number of live particles, or a few more just after an erase: erased
+   * particles are counted out once a bin grid build has removed them and
+   * their count has been read back, which nothing waits for.
+   */
   get particleCount(): number {
     return this.liveCount;
   }
@@ -303,6 +324,7 @@ export class Verlet {
     this.pipeline.write(withIds(particles));
     this.radii = radii;
     this.liveCount = particles.length;
+    this.pendingErases = [];
     this.nextId = particles.length;
   }
 
@@ -310,7 +332,8 @@ export class Verlet {
    * Adds particles while the simulation runs, each with a particle id not used
    * before, until the simulation holds its capacity; the rest are dropped.
    * Returns how many were added. The bins grow with the largest radius
-   * spawned.
+   * spawned. Erased particles make room once particleCount no longer counts
+   * them.
    *
    * Every radius must be more than 0, and keep the largest radius in use at
    * most MAX_RADIUS_RATIO times the smallest.
@@ -337,14 +360,50 @@ export class Verlet {
     if (added.length === 0) return 0;
 
     const firstId = this.nextId;
-    this.pipeline.append(
-      added.map((p, i) => ({ ...p, id: firstId + i })),
-      firstId
-    );
+    this.pipeline.append(added.map((p, i) => ({ ...p, id: firstId + i })));
     this.liveCount += added.length;
     this.nextId += added.length;
     this.radii = { smallest, largest };
     return added.length;
+  }
+
+  /**
+   * Erases the particles whose centres are within `radius` of `center`, while
+   * the simulation runs. They are marked on the GPU, and the next bin grid
+   * build leaves them out.
+   *
+   * It takes effect at once, so call it between submitted encoders, never
+   * between step() and submitting its encoder. Nothing waits for it: it
+   * resolves with how many particles it erased once that has been read back.
+   */
+  erase(center: [number, number], radius: number): Promise<number> {
+    if (!center.every(Number.isFinite)) {
+      throw new Error(`cannot erase around [${center}]; the centre must be finite`);
+    }
+    if (!(radius >= 0) || !Number.isFinite(radius)) {
+      throw new Error(`cannot erase with radius ${radius}; it must be 0 or more`);
+    }
+    const pending: PendingErase = { built: false };
+    this.pendingErases.push(pending);
+    const erased = this.pipeline.erase(center, radius);
+    erased.then(
+      (count) => {
+        pending.erased = count;
+        this.settleErases();
+      },
+      // The simulation was destroyed first; there is nothing left to count.
+      () => {}
+    );
+    return erased;
+  }
+
+  /** Counts out the particles of erases that are both read back and built. */
+  private settleErases() {
+    this.pendingErases = this.pendingErases.filter((pending) => {
+      if (pending.erased === undefined || !pending.built) return true;
+      this.liveCount -= pending.erased;
+      return false;
+    });
   }
 
   /** Calls the seed, and rejects more particles than the capacity. */

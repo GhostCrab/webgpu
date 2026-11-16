@@ -138,7 +138,10 @@ export default class Renderer {
       lastFrame = now;
 
       const input = this.controls.frameInput();
-      // Spawned particles are written before this frame's substeps are encoded.
+      // Erases and spawned particles reach the GPU before this frame's
+      // substeps are encoded. Nothing waits for an erase's count.
+      const erase = this.controls.frameErase();
+      if (erase) void this.verlet.erase(erase.center, erase.radius);
       this.verlet.spawn(this.controls.frameSpawn(elapsed));
       const commandEncoder = this.device.createCommandEncoder();
 

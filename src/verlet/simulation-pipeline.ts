@@ -1,16 +1,25 @@
+import { QUAD_INDEX_COUNT } from '../quad';
 import { readBuffer } from '../read-buffer';
 import { BinGrid, BinGridSize } from './bin-grid';
 import {
   COLOR_BYTES,
+  EDIT_BYTES,
+  LIVE_DISPATCH_OFFSET,
+  LIVE_DRAW_OFFSET,
+  LIVE_PARTICLES_BYTES,
+  packEdit,
+  packLiveParticles,
   packParticles,
   Particle,
   PARTICLE_BYTES,
+  unpackLiveCount,
   unpackParticles,
   unpackParticlesInPlace
 } from './particle-layout';
 import { computeShaderSource } from './shader-source';
 import collideShaderCode from './shaders/collide.wgsl';
 import constrainShaderCode from './shaders/constrain.wgsl';
+import editShaderCode from './shaders/edit.wgsl';
 import integrateShaderCode from './shaders/integrate.wgsl';
 import velocityShaderCode from './shaders/velocity.wgsl';
 import { VerletRenderer } from './verlet-renderer';
@@ -68,18 +77,25 @@ export interface BinGridContents {
 }
 
 
+type Pair = 0 | 1;
+const other = (pair: Pair): Pair => (pair === 0 ? 1 : 0);
+
 /**
  * Owns the particles on the GPU and the passes that advance and draw them.
  * Internal to Verlet. A particle holds an explicit velocity, and its colour is
  * in a buffer of its own. Every substep builds the bin grid, which leaves the
  * particles in bin order in the other of two particle buffers, then the
  * collision solve writes them back to the first.
+ *
+ * The live particles sit at the start of the buffer holding them. Their count
+ * is kept on the GPU, in the live particles buffer, and every per-particle
+ * dispatch and the draw are sized from it indirectly; the CPU never waits to
+ * learn it.
  */
 export class SimulationPipeline {
   private device: GPUDevice;
-  /** The live particles, at the start of the buffer holding them. */
-  private particleCount: number;
-  /** The largest radius among the live particles, which sizes the bins. */
+  private capacity: number;
+  /** The largest radius spawned or seeded since the last seeding, which sizes the bins. */
   private largestRadius = 0;
   /**
    * Two particle buffers: each build reads the particles from one and writes
@@ -87,9 +103,25 @@ export class SimulationPipeline {
    */
   private particleBuffers: [GPUBuffer, GPUBuffer];
   /** Which of the particle buffers holds the particles. */
-  private current: 0 | 1 = 0;
-  /** One colour per particle, at its particle id. Only drawing reads it. */
-  private colorBuffer: GPUBuffer;
+  private current: Pair = 0;
+  /**
+   * Two colour buffers. The one holding the colours has each particle's colour
+   * at the same place as the particle; each build moves the colours to the
+   * other with the particles. Only drawing reads them.
+   */
+  private colorBuffers: [GPUBuffer, GPUBuffer];
+  /** Which of the colour buffers holds the colours. */
+  private currentColors: Pair = 0;
+  /** The live particles (LiveParticles in common.wgsl). */
+  private liveBuffer: GPUBuffer;
+  /** What the latest spawn or erase asks of the GPU (Edit in common.wgsl). */
+  private editBuffer: GPUBuffer;
+  /** How many particles the latest erase marked. */
+  private erasedBuffer: GPUBuffer;
+  private editGroup: GPUBindGroup;
+  private editPipelines: { erase: GPUComputePipeline; append: GPUComputePipeline };
+  /** Readbacks of erase counts not yet mapped, destroyed with the pipeline. */
+  private pendingReadbacks = new Set<GPUBuffer>();
   /**
    * Per particle, at its place in the buffer holding the particles: the change
    * of velocity the collision solve found its impacts call for.
@@ -98,16 +130,25 @@ export class SimulationPipeline {
   private binGrid: BinGrid;
   private pipelines: Record<Stage, GPUComputePipeline>;
   private paramsGroup: GPUBindGroup;
-  /** Per buffer holding the particles: it at binding 0, the other at binding 1. */
+  /**
+   * Per buffer holding the particles: it at binding 0, the other at binding 1,
+   * and the impacts at binding 2. For every stage but a build, spawn and erase.
+   */
   private particleGroups: [GPUBindGroup, GPUBindGroup];
+  /**
+   * Per buffer holding the particles, then per buffer holding the colours: the
+   * particles at binding 0 and the other particle buffer at binding 1, the
+   * colours at binding 3 and the other colour buffer at binding 4. For a
+   * build, spawn and erase.
+   */
+  private sortGroups: [[GPUBindGroup, GPUBindGroup], [GPUBindGroup, GPUBindGroup]];
   private renderer: VerletRenderer;
 
   constructor(device: GPUDevice, options: SimulationPipelineOptions) {
     this.device = device;
-    this.particleCount = options.particles.length;
     const { capacity } = options;
+    this.capacity = capacity;
 
-    const { particleData, colorData } = packParticles(options.particles);
     const particleBuffer = () =>
       device.createBuffer({
         size: capacity * PARTICLE_BYTES,
@@ -118,16 +159,32 @@ export class SimulationPipeline {
           GPUBufferUsage.COPY_SRC
       });
     this.particleBuffers = [particleBuffer(), particleBuffer()];
-    this.colorBuffer = device.createBuffer({
-      size: capacity * COLOR_BYTES,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-    });
+    const colorBuffer = () =>
+      device.createBuffer({
+        size: capacity * COLOR_BYTES,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+      });
+    this.colorBuffers = [colorBuffer(), colorBuffer()];
     this.impactBuffer = device.createBuffer({
       size: capacity * 8,
       usage: GPUBufferUsage.STORAGE
     });
-    device.queue.writeBuffer(this.particleBuffers[0], 0, particleData);
-    device.queue.writeBuffer(this.colorBuffer, 0, colorData);
+    this.liveBuffer = device.createBuffer({
+      size: LIVE_PARTICLES_BYTES,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.INDIRECT |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC
+    });
+    this.editBuffer = device.createBuffer({
+      size: EDIT_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    this.erasedBuffer = device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+    });
 
     try {
       // The groups common.wgsl declares: params at group 0, binding 1, and the
@@ -135,23 +192,23 @@ export class SimulationPipeline {
       const paramsLayout = device.createBindGroupLayout({
         entries: [{ binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }]
       });
-      const particlesLayout = device.createBindGroupLayout({
-        entries: [0, 1, 2].map((binding) => ({
-          binding,
-          visibility: GPUShaderStage.COMPUTE,
-          buffer: { type: 'storage' as const }
-        }))
+      const storage = (binding: number): GPUBindGroupLayoutEntry => ({
+        binding,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: 'storage' }
       });
+      const particlesLayout = device.createBindGroupLayout({ entries: [0, 1, 2].map(storage) });
+      const sortLayout = device.createBindGroupLayout({ entries: [0, 1, 3, 4].map(storage) });
 
-      this.largestRadius = largestRadiusOf(options.particles);
       this.binGrid = new BinGrid(device, {
         bounds: options.bounds,
         minBinSize: options.minBinSize,
-        largestRadius: this.largestRadius,
-        particleCount: this.particleCount,
+        largestRadius: largestRadiusOf(options.particles),
         capacity,
+        live: this.liveBuffer,
+        edit: this.editBuffer,
         paramsLayout,
-        particlesLayout
+        sortLayout
       });
 
       const layout = device.createPipelineLayout({
@@ -169,34 +226,72 @@ export class SimulationPipeline {
         });
       }
 
+      const editLayout = device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+          storage(1)
+        ]
+      });
+      const editPipelineLayout = device.createPipelineLayout({
+        bindGroupLayouts: [paramsLayout, this.binGrid.layout, sortLayout, editLayout]
+      });
+      const editModule = device.createShaderModule({ code: computeShaderSource(editShaderCode) });
+      const editPipeline = (entryPoint: string) =>
+        device.createComputePipeline({
+          label: entryPoint,
+          layout: editPipelineLayout,
+          compute: { module: editModule, entryPoint }
+        });
+      this.editPipelines = { erase: editPipeline('erase'), append: editPipeline('append') };
+      this.editGroup = device.createBindGroup({
+        layout: editLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.editBuffer } },
+          { binding: 1, resource: { buffer: this.erasedBuffer } }
+        ]
+      });
+
       this.paramsGroup = device.createBindGroup({
         layout: paramsLayout,
         entries: [{ binding: 1, resource: { buffer: options.paramsBuffer } }]
       });
-      const particleGroup = (from: GPUBuffer, to: GPUBuffer) =>
+      const particleGroup = (particles: Pair) =>
         device.createBindGroup({
           layout: particlesLayout,
           entries: [
-            { binding: 0, resource: { buffer: from } },
-            { binding: 1, resource: { buffer: to } },
+            { binding: 0, resource: { buffer: this.particleBuffers[particles] } },
+            { binding: 1, resource: { buffer: this.particleBuffers[other(particles)] } },
             { binding: 2, resource: { buffer: this.impactBuffer } }
           ]
         });
-      const [a, b] = this.particleBuffers;
-      this.particleGroups = [particleGroup(a, b), particleGroup(b, a)];
+      this.particleGroups = [particleGroup(0), particleGroup(1)];
+      const sortGroup = (particles: Pair, colors: Pair) =>
+        device.createBindGroup({
+          layout: sortLayout,
+          entries: [
+            { binding: 0, resource: { buffer: this.particleBuffers[particles] } },
+            { binding: 1, resource: { buffer: this.particleBuffers[other(particles)] } },
+            { binding: 3, resource: { buffer: this.colorBuffers[colors] } },
+            { binding: 4, resource: { buffer: this.colorBuffers[other(colors)] } }
+          ]
+        });
+      this.sortGroups = [
+        [sortGroup(0, 0), sortGroup(0, 1)],
+        [sortGroup(1, 0), sortGroup(1, 1)]
+      ];
 
       this.renderer = new VerletRenderer(device, {
         format: options.format,
-        colorBuffer: this.colorBuffer
+        colorBuffers: this.colorBuffers
       });
     } catch (error) {
       // Nothing outside holds a reference yet, so release what was created.
-      this.particleBuffers.forEach((buffer) => buffer.destroy());
-      this.colorBuffer.destroy();
-      this.impactBuffer.destroy();
+      this.destroyBuffers();
       this.binGrid?.destroy();
       throw error;
     }
+
+    this.write(options.particles);
   }
 
   /** The buffer that holds the particles. */
@@ -204,39 +299,110 @@ export class SimulationPipeline {
     return this.particleBuffers[this.current];
   }
 
+  /** The sort group for the buffers holding the particles and their colours. */
+  private get sortGroup(): GPUBindGroup {
+    return this.sortGroups[this.current][this.currentColors];
+  }
+
   /**
    * Replaces every particle, and sizes the bins for the largest radius among
-   * them. Particle ids must run from 0 in the order given, and there must be
-   * no more particles than the capacity.
+   * them. There must be no more particles than the capacity.
    */
   write(particles: Particle[]) {
     const { particleData, colorData } = packParticles(particles);
     this.device.queue.writeBuffer(this.particleBuffer, 0, particleData);
-    this.device.queue.writeBuffer(this.colorBuffer, 0, colorData);
-    this.particleCount = particles.length;
+    this.device.queue.writeBuffer(this.colorBuffers[this.currentColors], 0, colorData);
+    this.device.queue.writeBuffer(
+      this.liveBuffer,
+      0,
+      packLiveParticles(particles.length, QUAD_INDEX_COUNT)
+    );
     this.largestRadius = largestRadiusOf(particles);
-    this.binGrid.resize(this.largestRadius, this.particleCount);
+    this.binGrid.resize(this.largestRadius);
   }
 
   /**
-   * Adds particles after the live ones, and sizes the bins for the largest
-   * radius in use. Their ids must run on from `firstId`, in any order, and the
-   * live particles must still fit the capacity. It takes effect at once, so
-   * call it between submitted encoders, never between encoding a substep and
-   * submitting it.
+   * Adds particles after the live ones, wherever the live ones end, and sizes
+   * the bins for the largest radius spawned. Particles beyond the capacity are
+   * dropped on the GPU, but the caller should never send them. It submits its
+   * own work and takes effect at once, so call it between submitted encoders,
+   * never between encoding a substep and submitting it.
    */
-  append(particles: Particle[], firstId: number) {
+  append(particles: Particle[]) {
     if (particles.length === 0) return;
-    const { particleData, colorData } = packParticles(particles, firstId);
-    this.device.queue.writeBuffer(
-      this.particleBuffer,
-      this.particleCount * PARTICLE_BYTES,
-      particleData
-    );
-    this.device.queue.writeBuffer(this.colorBuffer, firstId * COLOR_BYTES, colorData);
-    this.particleCount += particles.length;
+    // The other buffers are free between substeps, so they stage the particles.
+    const { particleData, colorData } = packParticles(particles);
+    this.device.queue.writeBuffer(this.particleBuffers[other(this.current)], 0, particleData);
+    this.device.queue.writeBuffer(this.colorBuffers[other(this.currentColors)], 0, colorData);
+    this.writeEdit({ added: particles.length });
+
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    this.setEditGroups(pass, this.editPipelines.append);
+    pass.dispatchWorkgroups(Math.ceil(particles.length / 64));
+    this.binGrid.encodeGrow(pass);
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+
     this.largestRadius = Math.max(this.largestRadius, largestRadiusOf(particles));
-    this.binGrid.resize(this.largestRadius, this.particleCount);
+    this.binGrid.resize(this.largestRadius);
+  }
+
+  /**
+   * Marks the live particles whose centres are within `radius` of `center`
+   * erased; the next bin grid build leaves them out. It submits its own work
+   * and takes effect at once, so call it between submitted encoders. Resolves
+   * with how many it marked, once that has been read back; nothing waits for
+   * it.
+   */
+  erase(center: [number, number], radius: number): Promise<number> {
+    this.writeEdit({ center, radius });
+    this.device.queue.writeBuffer(this.erasedBuffer, 0, new Uint32Array([0]));
+
+    const readback = this.device.createBuffer({
+      size: 4,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+    });
+    this.pendingReadbacks.add(readback);
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginComputePass();
+    this.setEditGroups(pass, this.editPipelines.erase);
+    pass.dispatchWorkgroupsIndirect(this.liveBuffer, LIVE_DISPATCH_OFFSET);
+    pass.end();
+    encoder.copyBufferToBuffer(this.erasedBuffer, 0, readback, 0, 4);
+    this.device.queue.submit([encoder.finish()]);
+
+    const release = () => {
+      this.pendingReadbacks.delete(readback);
+      readback.destroy();
+    };
+    return readback.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const erased = new Uint32Array(readback.getMappedRange())[0];
+        release();
+        return erased;
+      },
+      (error) => {
+        release();
+        throw error;
+      }
+    );
+  }
+
+  private writeEdit(values: { center?: [number, number]; radius?: number; added?: number }) {
+    this.device.queue.writeBuffer(
+      this.editBuffer,
+      0,
+      packEdit({ center: [0, 0], radius: 0, added: 0, ...values, capacity: this.capacity })
+    );
+  }
+
+  private setEditGroups(pass: GPUComputePassEncoder, pipeline: GPUComputePipeline) {
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, this.paramsGroup);
+    pass.setBindGroup(1, this.binGrid.bindGroup);
+    pass.setBindGroup(2, this.sortGroup);
+    pass.setBindGroup(3, this.editGroup);
   }
 
   /**
@@ -265,29 +431,28 @@ export class SimulationPipeline {
   /** What the latest bin grid build left behind, for tests of the build on its own. */
   async readBinGrid(): Promise<BinGridContents> {
     const grid = this.binGrid.size;
-    const [particles, colors, binStarts] = await Promise.all([
-      readBuffer(this.device, this.particleBuffer, this.particleCount * PARTICLE_BYTES),
-      readBuffer(this.device, this.colorBuffer),
+    const [{ particles, colors, count }, binStarts] = await Promise.all([
+      this.readContents(),
       this.binGrid.readStarts()
     ]);
-    return { grid, particles: unpackParticlesInPlace(particles, colors), binStarts };
+    return { grid, particles: unpackParticlesInPlace(particles, colors, count), binStarts };
   }
 
   /**
-   * The stages of a build. The last swaps which buffer holds the particles as
-   * it is encoded, so every stage encoded after it reads them in bin order.
+   * The stages of a build. The last swaps which buffers hold the particles and
+   * their colours as it is encoded, so every stage encoded after it reads them
+   * in bin order.
    */
   private binGridStages(): [string, (pass: GPUComputePassEncoder) => void][] {
-    const stages = this.binGrid.stages({
-      params: this.paramsGroup,
-      particles: this.particleGroups[this.current]
-    });
+    // Stages are encoded in order, so the group is chosen when the build is encoded.
+    const stages = this.binGrid.stages({ params: this.paramsGroup, particles: this.sortGroup });
     const [name, place] = stages[stages.length - 1];
     stages[stages.length - 1] = [
       name,
       (pass) => {
         place(pass);
-        this.current = this.current === 0 ? 1 : 0;
+        this.current = other(this.current);
+        this.currentColors = other(this.currentColors);
       }
     ];
     return stages;
@@ -302,7 +467,7 @@ export class SimulationPipeline {
         pass.setBindGroup(0, this.paramsGroup);
         pass.setBindGroup(1, this.binGrid.bindGroup);
         pass.setBindGroup(2, this.particleGroups[this.current]);
-        pass.dispatchWorkgroups(Math.ceil(this.particleCount / 64));
+        pass.dispatchWorkgroupsIndirect(this.liveBuffer, LIVE_DISPATCH_OFFSET);
       }
     ];
   }
@@ -317,7 +482,7 @@ export class SimulationPipeline {
       name,
       (pass) => {
         solve(pass);
-        this.current = this.current === 0 ? 1 : 0;
+        this.current = other(this.current);
       }
     ];
   }
@@ -340,24 +505,44 @@ export class SimulationPipeline {
     }
   }
 
-  /** Reads the particles back, ordered by particle id. */
+  /** Reads the live particles back, ordered by particle id. */
   async read(): Promise<Particle[]> {
-    const [particles, colors] = await Promise.all([
-      readBuffer(this.device, this.particleBuffer, this.particleCount * PARTICLE_BYTES),
-      readBuffer(this.device, this.colorBuffer)
+    const { particles, colors, count } = await this.readContents();
+    return unpackParticles(particles, colors, count);
+  }
+
+  /** The contents of the buffers holding the particles and their colours, and the live count. */
+  private async readContents() {
+    const [particles, colors, live] = await Promise.all([
+      readBuffer(this.device, this.particleBuffer),
+      readBuffer(this.device, this.colorBuffers[this.currentColors]),
+      readBuffer(this.device, this.liveBuffer)
     ]);
-    return unpackParticles(particles, colors);
+    return { particles, colors, count: unpackLiveCount(live) };
   }
 
   /** Clears `view` and draws the particles into it, through `projection`. */
   draw(encoder: GPUCommandEncoder, view: GPUTextureView, projection: Float32Array<ArrayBuffer>) {
-    this.renderer.render(encoder, view, projection, this.particleBuffer, this.particleCount);
+    this.renderer.render(encoder, view, projection, {
+      particles: this.particleBuffer,
+      colors: this.currentColors,
+      live: this.liveBuffer,
+      drawOffset: LIVE_DRAW_OFFSET
+    });
+  }
+
+  private destroyBuffers() {
+    this.particleBuffers.forEach((buffer) => buffer.destroy());
+    this.colorBuffers.forEach((buffer) => buffer.destroy());
+    this.impactBuffer.destroy();
+    this.liveBuffer.destroy();
+    this.editBuffer.destroy();
+    this.erasedBuffer.destroy();
+    this.pendingReadbacks.forEach((buffer) => buffer.destroy());
   }
 
   destroy() {
-    this.particleBuffers.forEach((buffer) => buffer.destroy());
-    this.colorBuffer.destroy();
-    this.impactBuffer.destroy();
+    this.destroyBuffers();
     this.binGrid.destroy();
     this.renderer.destroy();
   }

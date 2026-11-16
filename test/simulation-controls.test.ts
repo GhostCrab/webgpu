@@ -215,3 +215,44 @@ describe('spawn', () => {
     expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
   });
 });
+
+describe('erase', () => {
+  test('erases nothing until the erase key is held', () => {
+    const c = controls();
+    c.movePointer(50, 60);
+    expect(c.frameErase()).toBeNull();
+  });
+
+  test('while held, erases within the erase radius of the pointer, every frame', () => {
+    const c = controls();
+    c.eraseRadius = 25;
+    c.movePointer(50, 60);
+    c.startErasing();
+    expect(c.frameErase()).toEqual({ center: [50, 60], radius: 25 });
+    c.movePointer(70, 80);
+    expect(c.frameErase()).toEqual({ center: [70, 80], radius: 25 });
+  });
+
+  test('stops when the erase key is released', () => {
+    const c = controls();
+    c.startErasing();
+    c.stopErasing();
+    expect(c.frameErase()).toBeNull();
+  });
+
+  test('erases nothing while paused', () => {
+    const c = controls();
+    c.startErasing();
+    c.toggle('paused');
+    expect(c.frameErase()).toBeNull();
+  });
+
+  test('leaves the click force and spawning alone', () => {
+    const c = controls();
+    c.movePointer(50, 60);
+    c.startErasing();
+    c.frameErase();
+    expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
+    expect(c.frameSpawn(1 / 60)).toEqual([]);
+  });
+});

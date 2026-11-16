@@ -77,12 +77,16 @@ export default class GuiWrapper {
       .name('Capacity (restarts)')
       .onFinishChange(onRestart);
 
+    const erase = this.gui.addFolder('Erase (hold E)');
+    erase.add(controls, 'eraseRadius', 1, 300, 1).name('Radius');
+
     this.gui.add({ reset: onReset }, 'reset').name('Reset (R)');
 
     statsFolder.open();
     simulation.open();
     parameters.open();
     spawn.open();
+    erase.open();
   }
 
   /** Shows the live particles against the capacity. */

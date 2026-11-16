@@ -94,13 +94,11 @@ export const COLOR_BYTES = 4;
 const toByte = (channel: number) => Math.round(Math.min(Math.max(channel, 0), 1) * 255);
 
 /**
- * Lays particles out as the contents of the particle buffer,
- * in the order given, and their colours as the contents of its colour buffer
- * from particle id `firstId` on, where a particle's colour sits at its
- * particle id. Ids must run from `firstId` to `firstId` plus one less than the
- * number of particles, in any order.
+ * Lays particles out as the contents of the particle buffer, in the order
+ * given, and their colours as the contents of the colour buffer, each at the
+ * same place as its particle.
  */
-export function packParticles(particles: Particle[], firstId = 0): {
+export function packParticles(particles: Particle[]): {
   particleData: Float32Array<ArrayBuffer>;
   colorData: Uint32Array<ArrayBuffer>;
 } {
@@ -117,44 +115,51 @@ export function packParticles(particles: Particle[], firstId = 0): {
     ids[o + ID] = p.id;
     // Red in the low byte, as the shader's unpack4x8unorm reads it.
     const [r, g, b] = p.rgb;
-    colorData[p.id - firstId] = (toByte(r) | (toByte(g) << 8) | (toByte(b) << 16) | (255 << 24)) >>> 0;
+    colorData[i] = (toByte(r) | (toByte(g) << 8) | (toByte(b) << 16) | (255 << 24)) >>> 0;
   });
   return { particleData, colorData };
 }
 
 /**
- * Reads particles back out of the contents of the particle and colour
- * buffers, ordered by particle id.
+ * Reads the first `count` particles (by default every one) back out of the
+ * contents of the particle and colour buffers, ordered by particle id. Erased
+ * particles are left out.
  */
 export function unpackParticles(
   particleContents: ArrayBuffer,
-  colorContents: ArrayBuffer
+  colorContents: ArrayBuffer,
+  count?: number
 ): Particle[] {
-  return unpackParticlesInPlace(particleContents, colorContents).sort((a, b) => a.id - b.id);
+  return unpackParticlesInPlace(particleContents, colorContents, count).sort((a, b) => a.id - b.id);
 }
 
 /**
- * Reads particles back out of the contents of the particle and colour
- * buffers, in the order they sit in the particle buffer.
+ * Reads the first `count` particles (by default every one) back out of the
+ * contents of the particle and colour buffers, in the order they sit in the
+ * particle buffer. Erased particles are left out.
  */
 export function unpackParticlesInPlace(
   particleContents: ArrayBuffer,
-  colorContents: ArrayBuffer
+  colorContents: ArrayBuffer,
+  count = particleContents.byteLength / PARTICLE_BYTES
 ): Particle[] {
   const data = new Float32Array(particleContents);
   const ids = new Uint32Array(particleContents);
   const colors = new Uint32Array(colorContents);
   const particles: Particle[] = [];
-  for (let o = 0; o + PARTICLE_WORDS <= data.length; o += PARTICLE_WORDS) {
-    const id = ids[o + ID];
-    const color = colors[id];
+  for (let i = 0; i < count; i++) {
+    const o = i * PARTICLE_WORDS;
+    const radius = data[o + RADIUS];
+    // A radius below 0 marks an erased particle (isErased in common.wgsl).
+    if (radius < 0) continue;
+    const color = colors[i];
     particles.push({
-      id,
+      id: ids[o + ID],
       x: data[o + POS],
       y: data[o + POS + 1],
       vx: data[o + VEL],
       vy: data[o + VEL + 1],
-      radius: data[o + RADIUS],
+      radius,
       rgb: [(color & 0xff) / 255, ((color >>> 8) & 0xff) / 255, ((color >>> 16) & 0xff) / 255]
     });
   }
@@ -170,30 +175,76 @@ export function packBinGridParams(values: {
   width: number;
   height: number;
   binCount: number;
-  /** The live particles, at the start of the particle buffer. */
-  particleCount: number;
 }): ArrayBuffer {
   const view = makeStructuredView(structs.BinGridParams);
   view.set(values);
   return view.arrayBuffer;
 }
 
+// The live particles (the LiveParticles struct in common.wgsl).
+const liveStruct = structs.LiveParticles;
+
+/** Bytes of the live particles buffer. */
+export const LIVE_PARTICLES_BYTES = liveStruct.size;
+/** Where the arguments of an indirect dispatch over the live particles start. */
+export const LIVE_DISPATCH_OFFSET = liveStruct.fields.workgroupsX.offset;
+/** Where the arguments of an indirect indexed draw of the live particles start. */
+export const LIVE_DRAW_OFFSET = liveStruct.fields.indexCount.offset;
+
 /**
- * The particle buffer as a per-instance vertex buffer, exposing
- * the position, the radius and the particle id at the given shader locations.
+ * Lays out the contents of the live particles buffer for `count` live
+ * particles, each drawn as `indexCount` indices.
+ */
+export function packLiveParticles(count: number, indexCount: number): ArrayBuffer {
+  const view = makeStructuredView(liveStruct);
+  view.set({
+    workgroupsX: Math.ceil(count / 64),
+    workgroupsY: 1,
+    workgroupsZ: 1,
+    count,
+    indexCount,
+    instanceCount: count,
+    firstIndex: 0,
+    baseVertex: 0,
+    firstInstance: 0
+  });
+  return view.arrayBuffer;
+}
+
+/** The live count, from the contents of the live particles buffer. */
+export function unpackLiveCount(contents: ArrayBuffer): number {
+  return new Uint32Array(contents)[liveStruct.fields.count.offset / 4];
+}
+
+/** Bytes of the edit uniform (the Edit struct in common.wgsl). */
+export const EDIT_BYTES = structs.Edit.size;
+
+/** Lays out the contents of the edit uniform, for one spawn or erase. */
+export function packEdit(values: {
+  center: [number, number];
+  radius: number;
+  added: number;
+  capacity: number;
+}): ArrayBuffer {
+  const view = makeStructuredView(structs.Edit);
+  view.set(values);
+  return view.arrayBuffer;
+}
+
+/**
+ * The particle buffer as a per-instance vertex buffer, exposing the position
+ * and the radius at the given shader locations.
  */
 export function particleInstanceLayout(
   positionLocation: number,
-  radiusLocation: number,
-  idLocation: number
+  radiusLocation: number
 ): GPUVertexBufferLayout {
   return {
     arrayStride: PARTICLE_BYTES,
     stepMode: 'instance',
     attributes: [
       { shaderLocation: positionLocation, offset: POS * 4, format: 'float32x2' },
-      { shaderLocation: radiusLocation, offset: RADIUS * 4, format: 'float32' },
-      { shaderLocation: idLocation, offset: ID * 4, format: 'uint32' }
+      { shaderLocation: radiusLocation, offset: RADIUS * 4, format: 'float32' }
     ]
   };
 }
