@@ -55,7 +55,7 @@ npm run serve -- -p 8091 -c-1      # serves the repo root; pick a free port, -c-
 
 Open `http://localhost:8091` in a browser with WebGPU. In a worktree, run both commands there, on a port no other agent is using. Stop the server when done.
 
-Look for: particles fall, pile and stay inside the boundary circle; the click force, spawn (hold S) and erase (hold E) act at the pointer, also after the window is resized; the stats line shows substeps run against wanted; the console has no errors.
+Exercise every control and gesture the change touched, and whatever it could have disturbed. Always: particles fall, pile and stay inside the boundary circle, and the console has no errors. A gesture at the pointer is tried again after the window is resized.
 
 Report what was seen. When no browser is available, report the check as not done; a passing test run does not stand in for it.
 
