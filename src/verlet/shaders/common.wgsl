@@ -10,48 +10,156 @@ struct Params {
   constrainType: u32,
   unused1: u32,
   unused2: u32,
-  unused3: u32,
+  // The furthest a particle may move in one substep: the smallest radius.
+  speedLimit: f32,
   constrainCenter: vec4<f32>,
   // xy: the point, z: the force (positive attracts, negative repels, 0 is off)
   clickPoint: vec4<f32>,
+  // The collision solve scales each particle's averaged correction by the
+  // relaxation factor.
+  relaxation: f32,
+  // Fraction of the relative normal speed two particles keep when they collide.
+  particleRestitution: f32,
+  // Fraction of the relative speed along the contact two particles lose when
+  // they collide.
+  particleDamping: f32,
+  unused3: f32,
 };
 
-struct VerletObject {
-  pos: vec4<f32>,
-  prevPos: vec4<f32>,
-  accel: vec4<f32>,
-  colorAndRadius: vec4<f32>,
-  binLink: i32,
-  unused1: f32,
-  unused2: f32,
-  unused3: f32,
+// A particle. Its colour is not here: it lives in a buffer of its own, at the
+// same place as the particle, that the bin grid build moves with it and only
+// drawing reads.
+struct Particle {
+  pos: vec2<f32>,
+  // In simulation units per second.
+  vel: vec2<f32>,
+  // 0 disables the particle: it does not draw. Less than 0 marks it erased:
+  // it does not draw, and the next bin grid build leaves it out.
+  radius: f32,
+  // Identifies the particle for its whole life, wherever it sits in memory.
+  id: u32,
 }
 
-// The same memory as VerletObject, viewed with an atomic binLink so bin-set
-// can build the bin lists without locks. The two must stay field-for-field
-// identical; particle-layout.test.ts checks that they do.
-struct VerletObjectAtomicBin {
-  pos: vec4<f32>,
-  prevPos: vec4<f32>,
-  accel: vec4<f32>,
-  colorAndRadius: vec4<f32>,
-  binLink: atomic<i32>,
-  unused1: f32,
-  unused2: f32,
-  unused3: f32,
+// The bin grid: width x height square bins, binSize wide, covering the square
+// of side params.boxDim centred on the origin.
+struct BinGridParams {
+  binSize: f32,
+  width: u32,
+  height: u32,
+  binCount: u32,
 }
 
-struct BinParams {
-  size: i32,
-  x: i32,
-  y: i32,
+// Invocations per workgroup of every dispatch of one invocation per particle.
+// particle-layout.ts reads it from here.
+const PARTICLE_WORKGROUP_SIZE = 64u;
+
+// The live particles: the first `count` of the particle buffer. The rest of
+// the buffer, up to capacity, is unused. The GPU keeps it: the bin grid build
+// sets it to the particles it placed, and spawning raises it. With it, the
+// arguments of an indirect dispatch of one invocation per live particle,
+// PARTICLE_WORKGROUP_SIZE to a workgroup, and of an indirect draw of one quad
+// per live particle.
+struct LiveParticles {
+  workgroupsX: u32,
+  workgroupsY: u32,
+  workgroupsZ: u32,
   count: u32,
+  indexCount: u32,
+  instanceCount: u32,
+  firstIndex: u32,
+  baseVertex: i32,
+  firstInstance: u32,
 }
 
-struct CollisionStepOffset {
-  xOffset: i32,
-  yOffset: i32,
+// What one spawn or erase asks of the GPU.
+struct Edit {
+  // Erase: the particles whose centres are within `radius` of `center`.
+  center: vec2<f32>,
+  radius: f32,
+  // Spawn: the particles added after the live ones, and the most there may be.
+  added: u32,
+  capacity: u32,
 }
 
 @group(0) @binding(1) var<uniform> params: Params;
-@group(1) @binding(0) var<uniform> binParams: BinParams;
+@group(1) @binding(1) var<uniform> binGrid: BinGridParams;
+@group(1) @binding(5) var<storage, read> live: LiveParticles;
+
+// An erased particle, which the next bin grid build leaves out.
+fn isErased(p: Particle) -> bool {
+  return p.radius < 0.0;
+}
+
+// The bin a position falls in, as x and y. A position outside
+// the grid, or not finite, is placed in an edge bin, so it can never index
+// outside the bin buffers.
+fn binCoords(pos: vec2<f32>) -> vec2<u32> {
+  let cell = floor((pos + vec2<f32>(params.boxDim / 2.0)) / binGrid.binSize);
+  // Clamped after the conversion as well, because converting NaN gives any value.
+  return vec2<u32>(
+    min(u32(max(cell.x, 0.0)), binGrid.width - 1u),
+    min(u32(max(cell.y, 0.0)), binGrid.height - 1u)
+  );
+}
+
+// The index of the bin a position falls in.
+fn binIndex(pos: vec2<f32>) -> u32 {
+  let c = binCoords(pos);
+  return c.y * binGrid.width + c.x;
+}
+
+// Fraction of the normal speed a particle keeps when it bounces off the
+// boundary circle under the reflective constrain.
+const BOUNDARY_RESTITUTION = 0.8;
+// Fraction of the speed along the boundary a particle keeps each substep it
+// spends past the boundary circle under the classic constrain.
+const CLASSIC_DAMPING = 0.95;
+
+struct Constrained {
+  pos: vec2<f32>,
+  velocity: vec2<f32>,
+  // False when the particle was inside the boundary circle and is unchanged.
+  moved: bool,
+}
+
+// The selected constrain. A particle past the boundary circle is placed back
+// on it. Its velocity is its own, never the distance it is moved back, so a
+// particle far outside the circle returns to it without being flung across.
+fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Constrained {
+  let center = params.constrainCenter.xy;
+  let edge = params.constrainRadius - radius;
+  let fromCenter = pos - center;
+  let dist = length(fromCenter);
+
+  if (dist <= edge) {
+    return Constrained(pos, velocity, false);
+  }
+
+  let outward = fromCenter / dist;
+  var v = velocity;
+  let outwardSpeed = dot(v, outward);
+
+  if (params.constrainType == 0) {
+    // Classic: the particle stops at the edge.
+    if (outwardSpeed > 0.0) {
+      v -= outwardSpeed * outward;
+    }
+    v *= CLASSIC_DAMPING;
+  } else if (outwardSpeed > 0.0) {
+    // Reflective: only a particle moving outward bounces, and it loses normal
+    // speed only. One that is already moving inward keeps its velocity.
+    v -= (1.0 + BOUNDARY_RESTITUTION) * outwardSpeed * outward;
+  }
+
+  return Constrained(center + outward * edge, v, true);
+}
+
+// Shortens v to at most `limit`, keeping its direction. The speed limit uses
+// it so that no particle moves further than the smallest radius in a substep.
+fn limitLength(v: vec2<f32>, limit: f32) -> vec2<f32> {
+  let len = length(v);
+  if (len > limit) {
+    return v * (limit / len);
+  }
+  return v;
+}

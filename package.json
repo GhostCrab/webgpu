@@ -13,6 +13,7 @@
         "prod": "concurrently \"cross-env NODE_ENV=production ts-node webpack.ts --watch\" \"http-server\"",
         "prod-build": "cross-env NODE_ENV=production ts-node webpack.ts",
         "test": "vitest run --root .",
+        "bench": "vitest run --root . --config vitest.bench.config.mts",
         "typecheck": "tsc --noEmit && tsc --noEmit -p test",
         "lint": "eslint .",
         "prepare": "node -e \"try{require('child_process').execSync('git config core.hooksPath .githooks',{stdio:'ignore'})}catch{}\""
@@ -55,7 +56,6 @@
     "dependencies": {
         "game-inputs": "^0.8.0",
         "gl-matrix": "^3.4.3",
-        "webgpu-utils": "^2.1.1",
-        "wgpu-matrix": "^2.5.1"
+        "webgpu-utils": "^2.1.1"
     }
 }

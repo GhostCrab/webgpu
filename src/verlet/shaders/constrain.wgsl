@@ -1,63 +1,18 @@
-@group(2) @binding(0) var<storage, read_write> verletObjects: array<VerletObject>;
+@group(2) @binding(0) var<storage, read_write> particles: array<Particle>;
 
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
-  var voIndex = u32(GlobalInvocationID.x);
-
-  if (voIndex >= arrayLength(&verletObjects)) {
+// The boundary stage of a substep: the selected constrain, so that no substep
+// ends with a particle outside the boundary circle.
+@compute @workgroup_size(PARTICLE_WORKGROUP_SIZE)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= live.count) {
     return;
   }
 
-  var constrainCenter = params.constrainCenter.xy;
-  var constrainRadius = params.constrainRadius;
-
-  var pos = verletObjects[voIndex].pos.xy;
-  var prevPos = verletObjects[voIndex].prevPos.xy;
-  var radius = verletObjects[voIndex].colorAndRadius.w;
-
-  var v = constrainCenter - pos;
-  var dist = length(v);
-
-  if (dist > constrainRadius - radius) {
-    // Known: a particle far outside the circle gains a large inward velocity
-    // from this correction (GitHub issue #2).
-    if (params.constrainType == 0) {
-      var n = v / dist;
-      pos = constrainCenter - (n * (constrainRadius - radius));
-
-      var prevVec = prevPos - pos;
-      prevVec *= 0.95;
-      prevPos = pos + prevVec;
-    } else {
-      var n = v / dist;
-      var constrainPos = constrainCenter - (n * (constrainRadius - radius));
-
-      var prevVec = prevPos - pos;
-      var prevVecLen = length(prevVec);
-
-      var constrainVec = prevPos - constrainPos;
-      var constrainVecLen = length(constrainVec);
-
-      // this is how far past constrainPos the vector between fakePrevPos and bouncedPos needs to be
-      var bounceVecLen = constrainVecLen - prevVecLen;
-
-      var reflectNormal = normalize(vec2f(-pos.xy));
-      var oldVelo = pos - prevPos;
-
-      // calculate the reflect vector
-      var newVelo = reflect(oldVelo, reflectNormal);
-      pos = constrainPos + (newVelo * bounceVecLen);
-      prevPos = pos - (newVelo * .8);
-    }
+  let c = constrainToBoundary(particles[i].pos, particles[i].vel, particles[i].radius);
+  if (!c.moved) {
+    return;
   }
-
-  // var veloVec = prevPos - pos;
-  // var nextVelo = length(veloVec);
-  // if (nextVelo > .1) {
-  //   veloVec = normalize(veloVec) * .1;
-  //   prevPos = pos - veloVec;
-  // }
-
-  verletObjects[voIndex].pos = vec4<f32>(pos.xy, 0, 0);
-  verletObjects[voIndex].prevPos = vec4<f32>(prevPos.xy, 0, 0);
+  particles[i].pos = c.pos;
+  particles[i].vel = c.velocity;
 }

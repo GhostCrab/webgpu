@@ -1,39 +1,64 @@
 import { Quad } from '../quad';
-import type { DrawTarget } from '../simulation-target';
 import { particleInstanceLayout } from './particle-layout';
-import shaderCode from './shaders/verlet-renderer.wgsl';
+import shaderCode from './shaders/particle-disc.wgsl';
 
 export interface VerletRendererOptions {
-  /** Maps simulation space to clip space; a 4x4 matrix. */
-  projection: Float32Array;
-  /** The render pass configuration the particles are drawn into. */
-  target: DrawTarget;
+  /** Format of the canvas the particles are drawn to. */
+  format: GPUTextureFormat;
+  /**
+   * The two colour buffers, one paired with each particle buffer: each holds
+   * every particle's colour at the same place as the particle.
+   */
+  colorBuffers: [GPUBuffer, GPUBuffer];
 }
 
-/** Draws particles as instanced quads cut to discs. Internal to Verlet. */
+/** What to draw: the particles, their colours, and how many are live. */
+export interface DrawnParticles {
+  particles: GPUBuffer;
+  /** Which of the colour buffers holds their colours. */
+  colors: 0 | 1;
+  /** Indirect indexed draw arguments at `drawOffset`, one instance per live particle. */
+  live: GPUBuffer;
+  drawOffset: number;
+}
+
+/**
+ * Draws particles as instanced quads cut to discs, straight to the canvas.
+ * Internal to Verlet.
+ */
 export class VerletRenderer {
+  private device: GPUDevice;
   private pipeline: GPURenderPipeline;
-  private bindGroup: GPUBindGroup;
+  /** Per colour buffer. */
+  private bindGroups: [GPUBindGroup, GPUBindGroup];
   private projectionBuffer: GPUBuffer;
   private quad: Quad;
 
   constructor(device: GPUDevice, options: VerletRendererOptions) {
+    this.device = device;
     this.quad = new Quad(device);
 
     const bindGroupLayout = device.createBindGroupLayout({
-      entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }]
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }
+      ]
     });
 
     this.projectionBuffer = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
-    device.queue.writeBuffer(this.projectionBuffer, 0, new Float32Array(options.projection));
 
-    this.bindGroup = device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [{ binding: 0, resource: { buffer: this.projectionBuffer } }]
-    });
+    const bindGroup = (colorBuffer: GPUBuffer) =>
+      device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.projectionBuffer } },
+          { binding: 1, resource: { buffer: colorBuffer } }
+        ]
+      });
+    this.bindGroups = [bindGroup(options.colorBuffers[0]), bindGroup(options.colorBuffers[1])];
 
     const shaderModule = device.createShaderModule({ code: shaderCode });
 
@@ -53,7 +78,7 @@ export class VerletRenderer {
         entryPoint: 'fragment_main',
         targets: [
           {
-            format: options.target.format,
+            format: options.format,
             blend: {
               color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
               alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' }
@@ -65,24 +90,34 @@ export class VerletRenderer {
         frontFace: 'cw',
         cullMode: 'back',
         topology: 'triangle-list'
-      },
-      // 🌑 Depth
-      depthStencil: {
-        depthWriteEnabled: false,
-        depthCompare: 'less',
-        format: options.target.depthStencilFormat
-      },
-      multisample: {
-        count: options.target.sampleCount
       }
     });
   }
 
-  render(passEncoder: GPURenderPassEncoder, particleBuffer: GPUBuffer, count: number) {
-    passEncoder.setPipeline(this.pipeline);
-    passEncoder.setBindGroup(0, this.bindGroup);
-    passEncoder.setVertexBuffer(1, particleBuffer);
-    this.quad.render(passEncoder, count);
+  /**
+   * Encodes a render pass that clears `view` to black and draws the
+   * particles into it. `projection` maps simulation space to clip space; it
+   * reaches the GPU when the encoder is submitted, so draw at most once per
+   * submitted encoder.
+   */
+  render(
+    encoder: GPUCommandEncoder,
+    view: GPUTextureView,
+    projection: Float32Array<ArrayBuffer>,
+    drawn: DrawnParticles
+  ) {
+    this.device.queue.writeBuffer(this.projectionBuffer, 0, projection);
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        { view, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }
+      ]
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroups[drawn.colors]);
+    pass.setVertexBuffer(1, drawn.particles);
+    this.quad.renderIndirect(pass, drawn.live, drawn.drawOffset);
+    pass.end();
   }
 
   destroy() {

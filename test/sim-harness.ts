@@ -3,29 +3,35 @@ import { getDevice } from './gpu';
 
 import { afterEach } from 'vitest';
 
-import { readBuffer } from '../src/read-buffer';
-import { SimulationTarget } from '../src/simulation-target';
-import { Particle, unpackBinLinks } from '../src/verlet/particle-layout';
-import { scatter, Verlet } from '../src/verlet/verlet';
+import { fitCamera, simulationSize, STARTING_BOUNDARY_RADIUS } from '../src/camera';
+import { SEED_RADIUS } from '../src/verlet/capacity';
+import { Particle, SeedParticle } from '../src/verlet/particle-layout';
+import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
+import { BinGridContents, DEFAULT_CAPACITY, scatter, Verlet } from '../src/verlet/verlet';
+
+export type { BinGridContents };
 
 /**
- * The test surface for the simulation. Tests place particles, step whole
- * frames and read particles back; everything about how the simulation is
+ * The test surface for the simulation. Tests place particles, advance them
+ * by a number of substeps and read particles back; everything about how the simulation is
  * constructed and driven stays in this file.
  */
 
-export const BOUNDS = 2160;
-export const RADIUS = 1.5;
-export const DEFAULT_CONSTRAIN_RADIUS = BOUNDS / 2 - 20;
-export const SUBSTEPS = 20;
-export const FRAME_TIME = 1 / 60;
+/** The side of simulation space for the app's starting boundary circle: 2160. */
+export const BOUNDS = simulationSize(STARTING_BOUNDARY_RADIUS);
+/** The radius the app seeds and spawns particles with. */
+export const RADIUS = SEED_RADIUS;
+/** 20 substeps per 60 Hz frame: half the app's default substep rate. */
+export const SUBSTEP_RATE = 1200;
+// Substeps encoded into one submitted command buffer, as one 60 Hz frame does.
+const SUBSTEPS_PER_SUBMIT = 20;
 
 export interface TestParticle {
   x: number;
   y: number;
-  /** Defaults to the position, i.e. at rest. */
-  prevX?: number;
-  prevY?: number;
+  /** Velocity in simulation units per second. Defaults to 0, i.e. at rest. */
+  vx?: number;
+  vy?: number;
   radius?: number;
   rgb?: [number, number, number];
 }
@@ -38,21 +44,51 @@ export interface SimInput {
   /** Positive attracts, negative repels, 0 means gravity applies. */
   clickForce?: number;
   constrainRadius?: number;
+  /** Defaults to the origin. */
+  constrainCenter?: [number, number];
   classicConstrain?: boolean;
   collide?: boolean;
+  /** Substeps per second of simulated time. Defaults to SUBSTEP_RATE. */
+  substepRate?: number;
+  /** The collision settings. Each defaults to the app's. */
+  relaxation?: number;
+  particleRestitution?: number;
+  particleDamping?: number;
 }
 
 export interface Sim {
   device: GPUDevice;
-  count: number;
-  step(frames: number, input?: SimInput): void;
+  /** The number of live particles. */
+  readonly count: number;
+  /**
+   * Spawns particles, each with a particle id not used before, up to the
+   * simulation's capacity. Returns how many were added.
+   */
+  spawn(particles: TestParticle[]): number;
+  /**
+   * Erases the particles whose centres are within `radius` of (x, y). It takes
+   * effect at once; it resolves with how many it erased once that has been
+   * read back. `count` stops counting them after that and a substep.
+   */
+  erase(x: number, y: number, radius: number): Promise<number>;
+  /**
+   * Releases the simulation's GPU resources before the test ends, as the app
+   * does when it restarts the simulation. Nothing may use it afterwards.
+   */
+  destroy(): void;
+  /** Advances the simulation by a whole number of substeps. */
+  step(substeps: number, input?: SimInput): void;
   read(): Promise<ParticleState[]>;
   reset(): void;
-  /** Runs only the binning stage and returns the spatial hash it built. */
-  readBinLists(): Promise<{ heads: Int32Array; links: Int32Array }>;
   /**
-   * Draws the particles and presents them to a width x height canvas, as the
-   * app does each frame. Returns a lookup for the [r, g, b] bytes of a pixel.
+   * Runs only a bin grid build and returns what it left behind, the particles
+   * in the order they sit in memory.
+   */
+  readBinGrid(): Promise<BinGridContents>;
+  /**
+   * Draws the particles to a width x height canvas, fitted by the camera as
+   * the app does each frame. Returns a lookup for the [r, g, b] bytes of a
+   * pixel.
    */
   render(width: number, height: number): Promise<(x: number, y: number) => number[]>;
 }
@@ -75,13 +111,12 @@ export function seededScatter(count: number, seed: number): TestParticle[] {
     count,
     bounds: BOUNDS,
     radius: RADIUS,
-    substeps: SUBSTEPS,
     random: mulberry32(seed)
   });
 }
 
-// Each sim holds a full-size simulation target, several hundred MB of GPU
-// memory, so sims are released as soon as the test that made them ends.
+// Sims are released as soon as the test that made them ends, since the
+// largest hold hundreds of MB of particle and bin buffers.
 const live: (() => Promise<void>)[] = [];
 afterEach(async () => {
   // Every sim is released even when one reports an error.
@@ -90,7 +125,34 @@ afterEach(async () => {
   if (failed) throw failed.reason;
 });
 
-export async function createSim(particles: TestParticle[]): Promise<Sim | null> {
+export interface SimOptions {
+  /** The smallest bin size. Defaults to the largest particle's diameter. */
+  minBinSize?: number;
+  /**
+   * The boundary circle's radius, which sets the size of simulation space and
+   * is the default constrain radius of every step. Defaults to the app's.
+   */
+  boundaryRadius?: number;
+  /** The most particles the simulation holds. Defaults to the app's, or the seed's size if larger. */
+  capacity?: number;
+}
+
+/** A test particle as the simulation takes it, with the harness's defaults filled in. */
+function toSeedParticle(p: TestParticle): SeedParticle {
+  return {
+    x: p.x,
+    y: p.y,
+    vx: p.vx ?? 0,
+    vy: p.vy ?? 0,
+    radius: p.radius ?? RADIUS,
+    rgb: p.rgb ?? [1, 1, 1]
+  };
+}
+
+export async function createSim(
+  particles: TestParticle[],
+  options: SimOptions = {}
+): Promise<Sim | null> {
   const device = await getDevice();
   if (!device) return null;
 
@@ -122,61 +184,63 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
     return pending;
   }
 
-  // The app's simulation space: 3840x2160, centre origin, y down.
+  const boundaryRadius = options.boundaryRadius ?? STARTING_BOUNDARY_RADIUS;
+  const bounds = simulationSize(boundaryRadius);
   const format = navigator.gpu.getPreferredCanvasFormat();
-  const { target, verlet } = checked(() => {
-    const target = new SimulationTarget(device, {
-      width: (BOUNDS * 16) / 9,
-      height: BOUNDS,
-      format
-    });
-    try {
-      const verlet = new Verlet(device, {
-        bounds: BOUNDS,
-        projection: target.projection,
-        target: target.drawTarget,
-        substeps: SUBSTEPS,
-        seed: () =>
-          particles.map((p) => ({
-            x: p.x,
-            y: p.y,
-            prevX: p.prevX ?? p.x,
-            prevY: p.prevY ?? p.y,
-            radius: p.radius ?? RADIUS,
-            rgb: p.rgb ?? [1, 1, 1]
-          }))
-      });
-      return { target, verlet };
-    } catch (error) {
-      target.destroy();
-      throw error;
-    }
-  });
+  const verlet = checked(
+    () =>
+      new Verlet(device, {
+        bounds,
+        format,
+        minBinSize: options.minBinSize,
+        capacity: options.capacity ?? Math.max(particles.length, DEFAULT_CAPACITY),
+        seed: () => particles.map(toSeedParticle)
+      })
+  );
 
   live.push(async () => {
     try {
       await settle();
     } finally {
       verlet.destroy();
-      target.destroy();
     }
   });
   await settle();
 
   return {
     device,
-    count: particles.length,
+    get count() {
+      return verlet.particleCount;
+    },
 
-    step(frames, input = {}) {
-      for (let f = 0; f < frames; f++) {
+    spawn(spawned) {
+      return checked(() => verlet.spawn(spawned.map(toSeedParticle)));
+    },
+
+    erase(x, y, radius) {
+      return checkedRead(() => verlet.erase({ center: [x, y], radius }));
+    },
+
+    destroy() {
+      verlet.destroy();
+    },
+
+    step(substeps, input = {}) {
+      for (let done = 0; done < substeps; done += SUBSTEPS_PER_SUBMIT) {
         checked(() => {
           const encoder = device.createCommandEncoder();
-          verlet.step(encoder, FRAME_TIME, {
+          verlet.step(encoder, Math.min(SUBSTEPS_PER_SUBMIT, substeps - done), {
             clickPoint: [input.clickX ?? 0, input.clickY ?? 0],
             clickForce: input.clickForce ?? 0,
-            constrainRadius: input.constrainRadius ?? DEFAULT_CONSTRAIN_RADIUS,
+            constrainRadius: input.constrainRadius ?? boundaryRadius,
+            constrainCenter: input.constrainCenter,
             classicConstrain: input.classicConstrain ?? false,
-            collide: input.collide ?? true
+            collide: input.collide ?? true,
+            substepRate: input.substepRate ?? SUBSTEP_RATE,
+            relaxation: input.relaxation ?? DEFAULT_COLLISION_SETTINGS.relaxation,
+            particleRestitution:
+              input.particleRestitution ?? DEFAULT_COLLISION_SETTINGS.particleRestitution,
+            particleDamping: input.particleDamping ?? DEFAULT_COLLISION_SETTINGS.particleDamping
           });
           device.queue.submit([encoder.finish()]);
         });
@@ -191,18 +255,13 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
       checked(() => verlet.reset());
     },
 
-    async readBinLists() {
+    readBinGrid() {
       checked(() => {
         const encoder = device.createCommandEncoder();
-        verlet.computer.encodeBinning(encoder);
+        verlet.encodeBinGridBuild(encoder);
         device.queue.submit([encoder.finish()]);
       });
-
-      const heads = new Int32Array(
-        await checkedRead(() => readBuffer(device, verlet.computer.binBuffer))
-      );
-      const links = unpackBinLinks(await checkedRead(() => verlet.readParticleBuffer()));
-      return { heads, links };
+      return checkedRead(() => verlet.readBinGrid());
     },
 
     async render(width, height) {
@@ -218,9 +277,8 @@ export async function createSim(particles: TestParticle[]): Promise<Sim | null> 
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
         });
 
-        target.resize(width, height);
         const encoder = device.createCommandEncoder();
-        target.render(encoder, () => canvas.createView(), (pass) => verlet.draw(pass));
+        verlet.draw(encoder, canvas.createView(), fitCamera(bounds, width, height));
         encoder.copyTextureToBuffer({ texture: canvas }, { buffer: staging, bytesPerRow }, [
           width,
           height
@@ -255,6 +313,7 @@ export interface RunStats {
   centreY: number;
   meanDistance: number;
   maxDistance: number;
+  /** In simulation units per second. */
   meanSpeed: number;
   overlapPairs: number;
   meanOverlap: number;
@@ -278,13 +337,13 @@ export function runStats(particles: ParticleState[]): RunStats {
     maxOverlap: 0
   };
   for (const p of particles) {
-    if (!Number.isFinite(p.x + p.y + p.prevX + p.prevY)) s.nonFinite++;
+    if (!Number.isFinite(p.x + p.y + p.vx + p.vy)) s.nonFinite++;
     const d = Math.hypot(p.x, p.y);
     s.centreX += p.x / n;
     s.centreY += p.y / n;
     s.meanDistance += d / n;
     s.maxDistance = Math.max(s.maxDistance, d);
-    s.meanSpeed += Math.hypot(p.x - p.prevX, p.y - p.prevY) / n;
+    s.meanSpeed += Math.hypot(p.vx, p.vy) / n;
   }
   let overlapSum = 0;
   for (let i = 0; i < n; i++) {

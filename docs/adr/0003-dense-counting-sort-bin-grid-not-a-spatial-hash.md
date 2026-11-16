@@ -10,6 +10,6 @@ The bin grid is a dense grid over simulation space, built by counting sort: coun
 
 ## Consequences
 
-- A particle's index in the buffer changes on every build. Anything that follows a particle (tests, colour, readback) must use its particle id.
+- A particle's index in the buffer changes on every build. Anything that follows a particle must either use its particle id (tests, readback) or be moved with it by the build. Colour is moved: it sits in a buffer of its own at the particle's place, and each build copies it to the particle's new place, because particle ids only increase and, with erasing, pass the capacity, so they cannot index a buffer sized for it.
 - Bin size follows the largest radius the app has spawned or assigned. Bin buffers are allocated once, for the smallest bin size configured.
 - The grid is rebuilt every substep. Rebuilding less often with a margin is a known optimisation, to be adopted only with benchmark numbers behind it.

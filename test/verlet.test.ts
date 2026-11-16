@@ -3,30 +3,12 @@ import { describe, expect, test } from 'vitest';
 import { getDevice } from './gpu';
 import { BOUNDS, createSim, mulberry32, RADIUS, seededScatter } from './sim-harness';
 
-const { binGrid } = await import('../src/verlet/verlet-bin-computer');
-const { scatter } = await import('../src/verlet/verlet');
+const { maxCapacity, scatter } = await import('../src/verlet/verlet');
 
 const device = await getDevice();
 
-describe('bin grid sizing', () => {
-  test('covers the bounds with bins one particle diameter wide', () => {
-    expect(binGrid(2160, 3)).toEqual({ binSize: 3, width: 720, height: 720, binCount: 518400 });
-  });
-
-  test('rounds the grid up to an even number of bins each way', () => {
-    // 100 / 4 = 25 bins, which collision's every-second-bin passes cannot split.
-    const grid = binGrid(100, 4);
-    expect(grid.width).toBe(26);
-    expect(grid.height).toBe(26);
-  });
-
-  test('never makes a bin narrower than asked', () => {
-    expect(binGrid(100, 2.4).binSize).toBe(3);
-  });
-});
-
 describe('scatter', () => {
-  const options = { count: 500, bounds: BOUNDS, radius: RADIUS, substeps: 20 };
+  const options = { count: 500, bounds: BOUNDS, radius: RADIUS };
 
   test('is reproducible for a given random source', () => {
     const a = scatter({ ...options, random: mulberry32(7) });
@@ -46,6 +28,36 @@ describe('scatter', () => {
   });
 });
 
+describe('the most particles a device can hold', () => {
+  // WebGPU's default limits.
+  const defaults = {
+    maxStorageBufferBindingSize: 134217728,
+    maxBufferSize: 268435456,
+    maxComputeWorkgroupsPerDimension: 65535
+  };
+
+  test('under the default limits, is as many as one dispatch of 64-wide workgroups covers', () => {
+    expect(maxCapacity(defaults)).toBe(65535 * 64);
+  });
+
+  test('is as many 24-byte particles as a storage binding holds, when that is fewer', () => {
+    expect(maxCapacity({ ...defaults, maxStorageBufferBindingSize: 24_000_000 })).toBe(1_000_000);
+  });
+
+  test('is as many 24-byte particles as a buffer holds, when that is fewer', () => {
+    expect(maxCapacity({ ...defaults, maxBufferSize: 2_400_000 })).toBe(100_000);
+  });
+});
+
+describe.skipIf(!device)('capacity', () => {
+  test('rejects a capacity the device cannot hold, naming the capacity', async () => {
+    const most = maxCapacity(device.limits);
+    await expect(createSim([{ x: 0, y: 0 }], { capacity: most + 1 })).rejects.toThrow(
+      `capacity ${most + 1} is more than this device can hold; at most ${most}`
+    );
+  });
+});
+
 describe.skipIf(!device)('seeding', () => {
   test('rejects a seed with no particles', async () => {
     await expect(createSim([])).rejects.toThrow('seed returned no particles');
@@ -61,9 +73,22 @@ describe.skipIf(!device)('seeding', () => {
     );
   });
 
+  test('accepts radii up to 4 times apart, and rejects radii further apart', async () => {
+    await expect(createSim([{ x: 0, y: 0, radius: 1.5 }, { x: 10, y: 0, radius: 6 }])).resolves.not.toBeNull();
+    await expect(createSim([{ x: 0, y: 0, radius: 1.5 }, { x: 10, y: 0, radius: 6.1 }])).rejects.toThrow(
+      'seed returned radii from 1.5 to 6.1, more than 4 times apart'
+    );
+  });
+
+  test('a disabled particle does not count toward the radius ratio', async () => {
+    await expect(
+      createSim([{ x: 0, y: 0, radius: 0 }, { x: 10, y: 0, radius: 6 }, { x: 20, y: 0, radius: 2 }])
+    ).resolves.not.toBeNull();
+  });
+
   test('accepts far more particles than the default', async () => {
     const sim = await createSim(seededScatter(200000, 5));
-    sim.step(1);
+    sim.step(20);
     expect(await sim.read()).toHaveLength(200000);
   });
 });
@@ -75,15 +100,15 @@ describe.skipIf(!device)('reset', () => {
       { x: -30, y: 40 }
     ];
     const sim = await createSim(start);
-    sim.step(10);
+    sim.step(200);
     const moved = await sim.read();
     expect(moved[0].y).toBeGreaterThan(20);
 
     sim.reset();
     const after = await sim.read();
-    expect(after.map((p) => [p.x, p.y, p.prevX, p.prevY])).toEqual([
-      [10, 20, 10, 20],
-      [-30, 40, -30, 40]
+    expect(after.map((p) => [p.x, p.y, p.vx, p.vy])).toEqual([
+      [10, 20, 0, 0],
+      [-30, 40, 0, 0]
     ]);
   });
 });
