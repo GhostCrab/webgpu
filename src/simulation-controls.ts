@@ -56,7 +56,7 @@ export class SimulationControls {
    */
   capacity = DEFAULT_CAPACITY;
   /** Particles spawned per second while the spawn key is held. */
-  spawnRate = 600;
+  spawnRate = 20000;
   /** Radius of each spawned particle. */
   spawnRadius = SEED_RADIUS;
   /**

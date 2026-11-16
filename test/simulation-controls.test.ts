@@ -106,7 +106,7 @@ describe('settings', () => {
   });
 
   test('start with a capacity of 50,000 particles', () => {
-    expect(controls().capacity).toBe(50000);
+    expect(controls().capacity).toBe(2000000);
   });
 
   test('start at the default substep rate, which the user can change', () => {

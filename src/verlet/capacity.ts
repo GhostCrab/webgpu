@@ -5,7 +5,7 @@
  */
 
 /** The most particles a simulation holds at once unless it is told otherwise. */
-export const DEFAULT_CAPACITY = 50000;
+export const DEFAULT_CAPACITY = 2000000;
 
 /**
  * The most the largest radius in use may be, as a multiple of the smallest. It
