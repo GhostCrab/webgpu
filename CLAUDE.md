@@ -31,6 +31,10 @@ Issues live in GitHub Issues for `GhostCrab/webgpu`, accessed with the `gh` CLI.
 
 The five default triage labels are used unchanged: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
+### Parallel work
+
+Several agents in git worktrees: read `docs/agents/parallel-work.md` before creating a worktree or working in one.
+
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.

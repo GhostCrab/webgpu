@@ -44,3 +44,5 @@ temp
 *.js
 *.map
 !webpack.*
+# Agent worktrees
+.claude/worktrees/
