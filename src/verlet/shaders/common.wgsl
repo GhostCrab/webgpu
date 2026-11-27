@@ -8,7 +8,9 @@ struct Params {
   constrainRadius: f32,
   boxDim: f32,
   constrainType: u32,
-  unused1: u32,
+  // PROTOTYPE (interactions): 0 classic click force, 1 stir, 2 vortex,
+  // 3 shockwave, 4 tilt, 5 container, 6 paddle.
+  toolMode: u32,
   unused2: u32,
   // The furthest a particle may move in one substep: the smallest radius.
   speedLimit: f32,
@@ -24,6 +26,12 @@ struct Params {
   // they collide.
   particleDamping: f32,
   unused3: f32,
+  // PROTOTYPE (interactions): xy the pointer, z the tool radius, w its strength.
+  tool: vec4<f32>,
+  // PROTOTYPE: xy the pointer's velocity, w the shockwave ring's radius.
+  toolVel: vec4<f32>,
+  // PROTOTYPE: xy gravity, set by the CPU (tilt mode turns it).
+  gravity: vec4<f32>,
 };
 
 // A particle. Its colour is not here: it lives in a buffer of its own, at the
@@ -136,7 +144,10 @@ fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Cons
   }
 
   let outward = fromCenter / dist;
-  var v = velocity;
+  // PROTOTYPE: constrainCenter.zw is the boundary's own velocity (container
+  // mode), so the wall bounces particles relative to itself.
+  let wallVel = params.constrainCenter.zw;
+  var v = velocity - wallVel;
   let outwardSpeed = dot(v, outward);
 
   if (params.constrainType == 0) {
@@ -151,7 +162,7 @@ fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Cons
     v -= (1.0 + BOUNDARY_RESTITUTION) * outwardSpeed * outward;
   }
 
-  return Constrained(center + outward * edge, v, true);
+  return Constrained(center + outward * edge, v + wallVel, true);
 }
 
 // Shortens v to at most `limit`, keeping its direction. The speed limit uses

@@ -5,6 +5,7 @@ import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
 import { Palette, randomPalette, shade } from './palette';
 import {
   packParams,
+  type PrototypeTool,
   PARAMS_BYTES,
   Particle,
   PARTICLE_BYTES,
@@ -136,6 +137,8 @@ export interface SimulationInput extends CollisionSettings {
   constrainRadius: number;
   /** Centre of the boundary circle, in simulation space. Defaults to the origin. */
   constrainCenter?: [number, number];
+  /** PROTOTYPE (interactions): the pointer tool and gravity. */
+  tool?: PrototypeTool;
   /** True stops particles at the boundary; false bounces them off it. */
   classicConstrain: boolean;
   /** Whether particles collide with each other. */
@@ -310,7 +313,8 @@ export class Verlet {
         clickPoint: [input.clickPoint[0], input.clickPoint[1], input.clickForce],
         relaxation: input.relaxation,
         particleRestitution: input.particleRestitution,
-        particleDamping: input.particleDamping
+        particleDamping: input.particleDamping,
+        tool: input.tool
       })
     );
 

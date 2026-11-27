@@ -8,6 +8,7 @@ import {
 import { Clock, frameRate } from './clock';
 import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
+import { InteractionPrototype } from './prototype-interactions';
 import { SimulationControls } from './simulation-controls';
 import { randomPalette } from './verlet/palette';
 import { defaultSeed, Verlet } from './verlet/verlet';
@@ -34,6 +35,8 @@ export default class Renderer {
   verlet: Verlet;
   gui: GuiWrapper;
   tickInputs: () => void;
+  /** PROTOTYPE (interactions). */
+  prototype: InteractionPrototype;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -91,15 +94,17 @@ export default class Renderer {
 
     this.verlet = this.createSimulation();
 
+    const toSimulation = (pageX: number, pageY: number) =>
+      canvasToSimulation(
+        this.camera,
+        pageX * window.devicePixelRatio,
+        pageY * window.devicePixelRatio
+      );
     this.tickInputs = bindInputs(this.controls, {
-      toSimulation: (pageX, pageY) =>
-        canvasToSimulation(
-          this.camera,
-          pageX * window.devicePixelRatio,
-          pageY * window.devicePixelRatio
-        ),
+      toSimulation,
       onReset: () => this.verlet.reset()
     });
+    this.prototype = new InteractionPrototype(this.controls, this.canvas, toSimulation);
 
     this.gui = new GuiWrapper(
       this.controls,
@@ -154,6 +159,7 @@ export default class Renderer {
       lastFrame = now;
 
       const input = this.controls.frameInput();
+      this.prototype.apply(input, elapsed);
       // Erases and spawned particles reach the GPU before this frame's
       // substeps are encoded. Nothing waits for an erase's count.
       const erase = this.controls.frameErase();
@@ -174,6 +180,7 @@ export default class Renderer {
         const view = this.context.getCurrentTexture().createView();
         this.verlet.draw(commandEncoder, view, this.camera);
       }
+      this.prototype.drawOverlay(this.camera);
 
       this.queue.submit([commandEncoder.finish()]);
 

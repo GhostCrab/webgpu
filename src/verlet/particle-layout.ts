@@ -58,15 +58,35 @@ export interface ParamsValues {
   relaxation: number;
   particleRestitution: number;
   particleDamping: number;
+  /** PROTOTYPE (interactions): the tool. Absent means off, with normal gravity. */
+  tool?: PrototypeTool;
+}
+
+/** PROTOTYPE (interactions): the pointer tool and gravity the shaders read. */
+export interface PrototypeTool {
+  mode: number;
+  point: [number, number];
+  radius: number;
+  strength: number;
+  velocity: [number, number];
+  ring: number;
+  gravity: [number, number];
+  /** The boundary circle's own velocity. */
+  wallVelocity: [number, number];
 }
 
 /** Lays out the contents of the simulation params uniform. */
 export function packParams(values: ParamsValues): ArrayBuffer {
   const view = makeStructuredView(structs.Params);
+  const tool = values.tool;
   view.set({
     ...values,
-    constrainCenter: [...values.constrainCenter, 0, 0],
-    clickPoint: [...values.clickPoint, 0]
+    constrainCenter: [...values.constrainCenter, ...(tool?.wallVelocity ?? [0, 0])],
+    clickPoint: [...values.clickPoint, 0],
+    toolMode: tool?.mode ?? 0,
+    tool: tool ? [...tool.point, tool.radius, tool.strength] : [0, 0, 0, 0],
+    toolVel: tool ? [...tool.velocity, 0, tool.ring] : [0, 0, 0, 0],
+    gravity: [...(tool?.gravity ?? [0, 3000]), 0, 0]
   });
   return view.arrayBuffer;
 }
