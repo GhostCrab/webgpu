@@ -1,4 +1,5 @@
 import type { ClockTick } from './clock';
+import { POINTER_TOOLS, TOOL_RADIUS_RANGE } from './pointer-tools';
 import { SimulationControls } from './simulation-controls';
 import { MAX_RADIUS_RATIO, SEED_RADIUS } from './verlet/capacity';
 
@@ -25,6 +26,10 @@ export default class GuiWrapper {
     substeps: string;
     simulationSize: string;
   };
+  private controls: SimulationControls;
+  private toolHelp = { how: '' };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private toolRadius: any;
 
   /** `onRestart` makes a new simulation, at the capacity now set. */
   constructor(
@@ -54,8 +59,21 @@ export default class GuiWrapper {
     simulation.add(controls, 'clickLock').name('Click Lock (L)').listen();
     simulation.add(controls, 'classicConstrain').name('Classic Constrain (T)').listen();
 
+    // The number keys choose a tool too, so these listen; updateTool() keeps
+    // the radius and the help in step with whichever tool is chosen.
+    this.controls = controls;
+    const tool = this.gui.addFolder('Pointer Tool (1-7)');
+    const choices = Object.fromEntries(POINTER_TOOLS.map((t, i) => [`${i + 1} ${t.name}`, t.id]));
+    tool.add(controls, 'tool', choices).name('Tool').listen();
+    this.toolRadius = tool
+      .add(controls, 'toolRadius', TOOL_RADIUS_RANGE.min, TOOL_RADIUS_RANGE.max, 1)
+      .name('Radius (wheel)')
+      .listen();
+    tool.add(this.toolHelp, 'how').name('Buttons').disable().listen();
+    this.updateTool();
+
     const parameters = this.gui.addFolder('Parameters');
-    parameters.add(controls, 'constrainRadius', controls.constrainRadiusRange.min, controls.constrainRadiusRange.max).name('Constrain Radius');
+    parameters.add(controls, 'constrainRadius', controls.constrainRadiusRange.min, controls.constrainRadiusRange.max).name('Constrain Radius').listen();
     parameters.add(controls, 'impulse', 0, 10000).name('Mouse Impulse');
     parameters.add(controls, 'substepRate', 240, 4800, 60).name('Substeps per Second');
     parameters.add(controls, 'relaxation', 0.5, 2, 0.05).name('Relaxation');
@@ -84,6 +102,13 @@ export default class GuiWrapper {
     parameters.open();
     spawn.open();
     erase.open();
+  }
+
+  /** Shows the chosen tool's help, and its radius only if it has one. */
+  updateTool() {
+    const chosen = POINTER_TOOLS.find((t) => t.id === this.controls.tool);
+    this.toolHelp.how = chosen.how;
+    this.toolRadius.show(this.controls.toolHasRadius);
   }
 
   /** Shows the live particles against the capacity. */

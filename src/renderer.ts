@@ -9,6 +9,7 @@ import { Clock, frameRate } from './clock';
 import GuiWrapper from './gui-wrapper';
 import { bindInputs } from './input-bindings';
 import { SimulationControls } from './simulation-controls';
+import { ToolOverlay } from './tool-overlay';
 import { randomPalette } from './verlet/palette';
 import { defaultSeed, Verlet } from './verlet/verlet';
 
@@ -34,6 +35,7 @@ export default class Renderer {
   verlet: Verlet;
   gui: GuiWrapper;
   tickInputs: () => void;
+  overlay: ToolOverlay;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -90,8 +92,10 @@ export default class Renderer {
     window.addEventListener('resize', () => this.resizeCanvas());
 
     this.verlet = this.createSimulation();
+    this.overlay = new ToolOverlay(this.canvas);
 
     this.tickInputs = bindInputs(this.controls, {
+      wheelTarget: this.canvas,
       toSimulation: (pageX, pageY) =>
         canvasToSimulation(
           this.camera,
@@ -153,7 +157,7 @@ export default class Renderer {
       const elapsed = (now - lastFrame) / 1000;
       lastFrame = now;
 
-      const input = this.controls.frameInput();
+      const input = this.controls.frameInput(elapsed);
       // Erases and spawned particles reach the GPU before this frame's
       // substeps are encoded. Nothing waits for an erase's count.
       const erase = this.controls.frameErase();
@@ -168,12 +172,19 @@ export default class Renderer {
       this.verlet.step(commandEncoder, tick.substeps, input);
       this.gui.updateFrame(frameRate(elapsed), tick);
       this.gui.updateParticles(this.verlet.particleCount, this.verlet.capacity);
+      this.gui.updateTool();
 
       // A hidden or collapsed canvas has no area and nothing to draw to.
       if (this.camera.scale > 0) {
         const view = this.context.getCurrentTexture().createView();
         this.verlet.draw(commandEncoder, view, this.camera);
       }
+      this.overlay.draw(
+        this.controls.toolOutline(),
+        this.camera,
+        this.canvas.width,
+        this.canvas.height
+      );
 
       this.queue.submit([commandEncoder.finish()]);
 

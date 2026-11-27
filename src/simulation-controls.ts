@@ -1,8 +1,24 @@
 import { DEFAULT_SUBSTEP_RATE, MAX_FRAME_TIME } from './clock';
+import {
+  BLAST_SPEED,
+  BLAST_STRENGTH,
+  CONTAINER_RADIUS_FRACTION,
+  IMPLOSION_RADIUS,
+  IMPLOSION_SCALE,
+  POINTER_VELOCITY_SMOOTHING,
+  PointerTool,
+  SHOCKWAVE_WIDTH,
+  STIR_RATE,
+  TOOL_RADIUS,
+  TOOL_RADIUS_RANGE,
+  VORTEX_STRENGTH
+} from './pointer-tools';
 import { DEFAULT_CAPACITY, SEED_RADIUS } from './verlet/capacity';
 import { DEFAULT_COLLISION_SETTINGS } from './verlet/collision';
+import { DEFAULT_GRAVITY, GRAVITY_STRENGTH } from './verlet/gravity';
 import { Palette, Rgb, shade } from './verlet/palette';
 import type { SeedParticle } from './verlet/particle-layout';
+import type { ToolEffect } from './verlet/tool-effect';
 import type { EraseRegion, SimulationInput } from './verlet/verlet';
 
 /** Spawned particles land within this many spawn radii of the pointer. */
@@ -11,8 +27,24 @@ const SPAWN_SPREAD = 10;
 /** The smallest constrain radius the settings panel offers. */
 const MIN_CONSTRAIN_RADIUS = 50;
 
-/** Which way a held mouse button drives the click force. */
-export type ClickButton = 'attract' | 'repel';
+/** A mouse button. What it does depends on the pointer tool. */
+export type MouseButton = 'left' | 'right';
+
+/** The shortest frame the pointer's velocity is measured over, in seconds. */
+const MIN_POINTER_FRAME = 1 / 240;
+
+/** What to outline over the simulation to show the pointer tool. */
+export type ToolOutline =
+  | { kind: 'circle'; center: [number, number]; radius: number; active: boolean }
+  /** Tilt's gravity, drawn from the origin at a tenth of its size in units. */
+  | { kind: 'arrow'; from: [number, number]; to: [number, number] };
+
+/** A shockwave under way: where it started, how long ago, and which way it goes. */
+interface Shockwave {
+  origin: [number, number];
+  age: number;
+  implode: boolean;
+}
 
 /**
  * The simulation controls: the user-adjustable state of the simulation, and
@@ -20,6 +52,10 @@ export type ClickButton = 'attract' | 'repel';
  *
  * Knows nothing about the DOM or the GPU. The keyboard and mouse bindings and
  * the settings panel both drive this one object.
+ *
+ * The pointer tool decides what the mouse buttons and wheel do: the click
+ * force (the force tool), or one of the others in `pointer-tools.ts`, which
+ * act through gravity, the boundary circle and the tool effect.
  *
  * Spawning is its own gesture, separate from the click force: while the spawn
  * key is held, particles are spawned around the pointer at the spawn rate.
@@ -70,7 +106,23 @@ export class SimulationControls {
   eraseRadius = 30;
 
   private pointer: [number, number] = [0, 0];
-  private held: Record<ClickButton, boolean> = { attract: false, repel: false };
+  private held: Record<MouseButton, boolean> = { left: false, right: false };
+  private activeTool: PointerTool = 'force';
+  private toolRadii: Partial<Record<PointerTool, number>> = { ...TOOL_RADIUS };
+  /** Where the pointer was at the last frame, and its smoothed velocity since. */
+  private framePointer: [number, number] = [0, 0];
+  private pointerVelocity: [number, number] = [0, 0];
+  /** Gravity, which tilt turns. */
+  private gravity: [number, number] = [...DEFAULT_GRAVITY];
+  /** The boundary circle's centre, which the container moves, and where it was at the last frame. */
+  private boundaryCenter: [number, number] = [0, 0];
+  private frameBoundaryCenter: [number, number] = [0, 0];
+  /** Where the container was grabbed, from its centre. */
+  private grabOffset: [number, number] = [0, 0];
+  private shockwave: Shockwave | null = null;
+  private shockwaveRing = 0;
+  /** The constrain radius the container shrank, to restore when another tool is chosen. */
+  private radiusBeforeContainer: number | null = null;
   private heldForce = 0;
   private clickPoint: [number, number] = [0, 0];
   private clickForce = 0;
@@ -163,20 +215,255 @@ export class SimulationControls {
     this.pointer = [x, y];
   }
 
-  /** The most recently pressed button decides the direction of the force. */
-  press(button: ClickButton) {
-    this.held[button] = true;
-    this.heldForce = button === 'attract' ? this.impulse : -this.impulse;
+  /**
+   * The pointer tool: what the mouse buttons and wheel do. Choosing one starts
+   * it afresh: gravity points down again, the boundary circle is back at the
+   * origin, and no shockwave is under way. Choosing the container shrinks a
+   * boundary circle too large to move; choosing another tool restores it.
+   */
+  get tool(): PointerTool {
+    return this.activeTool;
   }
 
-  /** Releasing one button hands the force to the other if it is still held. */
-  release(button: ClickButton) {
-    this.held[button] = false;
-    if (button === 'attract') {
-      this.heldForce = this.held.repel ? -this.impulse : 0;
-    } else {
-      this.heldForce = this.held.attract ? this.impulse : 0;
+  set tool(tool: PointerTool) {
+    if (tool === this.activeTool) return;
+    if (this.radiusBeforeContainer !== null) {
+      this.constrainRadius = this.radiusBeforeContainer;
+      this.radiusBeforeContainer = null;
     }
+    this.activeTool = tool;
+    this.heldForce = 0;
+    this.clickForce = 0;
+    this.clickPoint = [0, 0];
+    this.shockwave = null;
+    this.level();
+    if (tool === 'container') {
+      const largest = this.constrainRadiusRange.max * CONTAINER_RADIUS_FRACTION;
+      if (this.constrainRadius > largest) {
+        this.radiusBeforeContainer = this.constrainRadius;
+        this.constrainRadius = largest;
+      }
+    }
+  }
+
+  /** Whether the tool has a reach that the wheel and the Radius setting change. */
+  get toolHasRadius(): boolean {
+    return this.toolRadii[this.activeTool] !== undefined;
+  }
+
+  /** The tool's reach, in simulation units. Each tool keeps its own; 0 for a tool with none. */
+  get toolRadius(): number {
+    return this.toolRadii[this.activeTool] ?? 0;
+  }
+
+  set toolRadius(radius: number) {
+    if (!this.toolHasRadius) return;
+    this.toolRadii[this.activeTool] = Math.min(
+      Math.max(radius, TOOL_RADIUS_RANGE.min),
+      TOOL_RADIUS_RANGE.max
+    );
+  }
+
+  /** The wheel: scales the tool's reach, within its range. */
+  scaleToolRadius(factor: number) {
+    this.toolRadius = this.toolRadius * factor;
+  }
+
+  /** Gravity points down again and the boundary circle returns to the origin. */
+  level() {
+    this.gravity = [...DEFAULT_GRAVITY];
+    this.boundaryCenter = [0, 0];
+    this.frameBoundaryCenter = [0, 0];
+  }
+
+  /**
+   * A mouse button is pressed. With the force tool, the most recently pressed
+   * button decides the direction of the force; with the shockwave, each press
+   * starts one at the pointer, replacing any under way; with the container, a
+   * left press grabs the boundary circle where the pointer is.
+   */
+  pressButton(button: MouseButton) {
+    this.held[button] = true;
+    switch (this.activeTool) {
+      case 'force':
+        this.heldForce = button === 'left' ? this.impulse : -this.impulse;
+        break;
+      case 'shockwave':
+        this.shockwave = { origin: [...this.pointer], age: 0, implode: button === 'right' };
+        this.shockwaveRing = button === 'right' ? IMPLOSION_RADIUS : 0;
+        break;
+      case 'container':
+        if (button === 'left') {
+          this.grabOffset = [
+            this.pointer[0] - this.boundaryCenter[0],
+            this.pointer[1] - this.boundaryCenter[1]
+          ];
+        }
+        break;
+    }
+  }
+
+  /**
+   * A mouse button is released. With the force tool, the force passes to the
+   * other button if it is still held.
+   */
+  releaseButton(button: MouseButton) {
+    this.held[button] = false;
+    if (this.activeTool !== 'force') return;
+    if (button === 'left') {
+      this.heldForce = this.held.right ? -this.impulse : 0;
+    } else {
+      this.heldForce = this.held.left ? this.impulse : 0;
+    }
+  }
+
+  /**
+   * What to outline to show the tool, as of the last frame: the reach of a
+   * stir, vortex or paddle (active while it acts), a shockwave's ring, tilt's
+   * gravity, the container's boundary circle. Null for the force tool, and
+   * for a shockwave when none is under way.
+   */
+  toolOutline(): ToolOutline | null {
+    const pointer: [number, number] = [...this.pointer];
+    switch (this.activeTool) {
+      case 'force':
+        return null;
+      case 'stir':
+      case 'paddle':
+        return { kind: 'circle', center: pointer, radius: this.toolRadius, active: this.held.left };
+      case 'vortex':
+        return {
+          kind: 'circle',
+          center: pointer,
+          radius: this.toolRadius,
+          active: this.held.left || this.held.right
+        };
+      case 'shockwave':
+        if (!this.shockwave) return null;
+        return {
+          kind: 'circle',
+          center: [...this.shockwave.origin],
+          radius: this.shockwaveRing,
+          active: true
+        };
+      case 'tilt':
+        return { kind: 'arrow', from: [0, 0], to: [this.gravity[0] / 10, this.gravity[1] / 10] };
+      case 'container':
+        return {
+          kind: 'circle',
+          center: [...this.boundaryCenter],
+          radius: this.constrainRadius,
+          active: this.held.left
+        };
+    }
+  }
+
+  /** The pointer's velocity over the frame, smoothed. */
+  private trackPointer(elapsed: number) {
+    const frame = Math.max(elapsed, MIN_POINTER_FRAME);
+    const keep = POINTER_VELOCITY_SMOOTHING;
+    const moved = (axis: 0 | 1) =>
+      this.pointerVelocity[axis] * keep +
+      ((this.pointer[axis] - this.framePointer[axis]) / frame) * (1 - keep);
+    this.pointerVelocity = [moved(0), moved(1)];
+    this.framePointer = [...this.pointer];
+  }
+
+  /**
+   * Tilt: the left button points gravity from the origin toward the pointer,
+   * and the right turns it off. Either lasts until changed or levelled.
+   */
+  private frameGravity(): [number, number] {
+    if (this.activeTool === 'tilt') {
+      if (this.held.right) {
+        this.gravity = [0, 0];
+      } else if (this.held.left) {
+        const length = Math.hypot(this.pointer[0], this.pointer[1]);
+        if (length > 0) {
+          this.gravity = [
+            (this.pointer[0] / length) * GRAVITY_STRENGTH,
+            (this.pointer[1] / length) * GRAVITY_STRENGTH
+          ];
+        }
+      }
+    }
+    return [...this.gravity];
+  }
+
+  /**
+   * The container: while the left button is held the boundary circle follows
+   * the pointer, kept within the starting circle so it stays inside
+   * simulation space. Its velocity is how far it moved over the frame.
+   */
+  private frameBoundary(elapsed: number): { center: [number, number]; velocity: [number, number] } {
+    if (this.activeTool === 'container' && this.held.left) {
+      const room = Math.max(this.constrainRadiusRange.max - this.constrainRadius, 0);
+      let x = this.pointer[0] - this.grabOffset[0];
+      let y = this.pointer[1] - this.grabOffset[1];
+      const distance = Math.hypot(x, y);
+      if (distance > room) {
+        const scale = room / distance;
+        x *= scale;
+        y *= scale;
+      }
+      this.boundaryCenter = [x, y];
+    }
+    const frame = Math.max(elapsed, MIN_POINTER_FRAME);
+    const velocity: [number, number] = [
+      (this.boundaryCenter[0] - this.frameBoundaryCenter[0]) / frame,
+      (this.boundaryCenter[1] - this.frameBoundaryCenter[1]) / frame
+    ];
+    this.frameBoundaryCenter = [...this.boundaryCenter];
+    return { center: [...this.boundaryCenter], velocity };
+  }
+
+  /** The stir, vortex, shockwave or paddle, while it acts. */
+  private frameToolEffect(elapsed: number): ToolEffect | undefined {
+    const center: [number, number] = [...this.pointer];
+    const radius = this.toolRadius;
+    switch (this.activeTool) {
+      case 'stir':
+        if (!this.held.left) return undefined;
+        return { kind: 'stir', center, radius, velocity: [...this.pointerVelocity], rate: STIR_RATE };
+      case 'vortex':
+        if (this.held.left) return { kind: 'vortex', center, radius, strength: -VORTEX_STRENGTH };
+        if (this.held.right) return { kind: 'vortex', center, radius, strength: VORTEX_STRENGTH };
+        return undefined;
+      case 'paddle':
+        if (!this.held.left) return undefined;
+        return { kind: 'obstacle', center, radius, velocity: [...this.pointerVelocity] };
+      case 'shockwave':
+        return this.frameShockwave(elapsed);
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * A shockwave's ring grows from where it started (a blast) or shrinks to it
+   * (an implosion), and holds still while the simulation is paused. A blast
+   * ends once its ring could have crossed the starting circle, an implosion
+   * when its ring reaches its centre.
+   */
+  private frameShockwave(elapsed: number): ToolEffect | undefined {
+    const wave = this.shockwave;
+    if (!wave) return undefined;
+    if (!this.paused) wave.age += Math.min(Math.max(elapsed, 0), MAX_FRAME_TIME);
+    const ring = wave.implode
+      ? IMPLOSION_RADIUS - BLAST_SPEED * IMPLOSION_SCALE * wave.age
+      : BLAST_SPEED * wave.age;
+    if (ring < 0 || ring > 2 * this.constrainRadiusRange.max) {
+      this.shockwave = null;
+      return undefined;
+    }
+    this.shockwaveRing = ring;
+    return {
+      kind: 'shockwave',
+      center: [...wave.origin],
+      ringRadius: ring,
+      width: SHOCKWAVE_WIDTH,
+      strength: wave.implode ? -BLAST_STRENGTH * IMPLOSION_SCALE : BLAST_STRENGTH
+    };
   }
 
   toggle(setting: 'collide' | 'paused' | 'clickLock' | 'classicConstrain') {
@@ -184,22 +471,33 @@ export class SimulationControls {
   }
 
   /**
-   * The simulation input for the next frame. Call once per frame: while a
-   * button is held the click force follows the pointer, and with click lock
-   * on it stays where it was when the button was released.
+   * The simulation input for the next frame, `elapsed` seconds after the last.
+   * Call once per frame. With the force tool, while a button is held the
+   * click force follows the pointer, and with click lock on it stays where it
+   * was when the button was released. The other tools act through gravity,
+   * the boundary circle and the tool effect.
    */
-  frameInput(): SimulationInput {
-    if (this.held.attract || this.held.repel) {
-      this.clickPoint = this.pointer;
-      this.clickForce = this.heldForce;
-    } else if (!this.clickLock) {
-      this.clickPoint = [0, 0];
-      this.clickForce = 0;
+  frameInput(elapsed: number): SimulationInput {
+    this.trackPointer(elapsed);
+
+    if (this.activeTool === 'force') {
+      if (this.held.left || this.held.right) {
+        this.clickPoint = this.pointer;
+        this.clickForce = this.heldForce;
+      } else if (!this.clickLock) {
+        this.clickPoint = [0, 0];
+        this.clickForce = 0;
+      }
     }
 
+    const boundary = this.frameBoundary(elapsed);
     return {
       clickPoint: this.clickPoint,
       clickForce: this.clickForce,
+      gravity: this.frameGravity(),
+      constrainCenter: boundary.center,
+      constrainVelocity: boundary.velocity,
+      toolEffect: this.frameToolEffect(elapsed),
       constrainRadius: this.constrainRadius,
       classicConstrain: this.classicConstrain,
       collide: this.collide,

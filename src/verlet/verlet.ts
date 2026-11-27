@@ -2,6 +2,7 @@ import { Camera, cameraProjection } from '../camera';
 import { checkSubstepRate } from '../clock';
 import { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_COUNT, SEED_RADIUS } from './capacity';
 import { CollisionSettings, DEFAULT_COLLISION_SETTINGS } from './collision';
+import { DEFAULT_GRAVITY } from './gravity';
 import { Palette, randomPalette, shade } from './palette';
 import {
   packParams,
@@ -12,10 +13,13 @@ import {
   SeedParticle
 } from './particle-layout';
 import { BinGridContents, EraseRegion, SimulationPipeline, StageTimer } from './simulation-pipeline';
+import type { ToolEffect } from './tool-effect';
 
 export type { BinGridContents, EraseRegion, StageTimer } from './simulation-pipeline';
 
 export { DEFAULT_CAPACITY, MAX_RADIUS_RATIO, SEED_RADIUS } from './capacity';
+export { DEFAULT_GRAVITY } from './gravity';
+export type { ToolEffect } from './tool-effect';
 
 export interface ScatterOptions {
   count: number;
@@ -136,6 +140,16 @@ export interface SimulationInput extends CollisionSettings {
   constrainRadius: number;
   /** Centre of the boundary circle, in simulation space. Defaults to the origin. */
   constrainCenter?: [number, number];
+  /**
+   * Velocity of the boundary circle, in units per second: particles bounce
+   * off a moving boundary circle as seen from it. Defaults to at rest. It does
+   * not move the circle; the next frame's centre does.
+   */
+  constrainVelocity?: [number, number];
+  /** Gravity, in units per second squared. Defaults to DEFAULT_GRAVITY. */
+  gravity?: [number, number];
+  /** What the pointer tool does to particles this frame. Defaults to nothing. */
+  toolEffect?: ToolEffect;
   /** True stops particles at the boundary; false bounces them off it. */
   classicConstrain: boolean;
   /** Whether particles collide with each other. */
@@ -251,6 +265,9 @@ export class Verlet {
         deltaTime: 0,
         constrainRadius: this.bounds / 2,
         constrainCenter: [0, 0],
+        constrainVelocity: [0, 0],
+        gravity: DEFAULT_GRAVITY,
+        toolEffect: null,
         boxDim: this.bounds,
         constrainType: 1,
         speedLimit: this.speedLimit,
@@ -304,6 +321,9 @@ export class Verlet {
         deltaTime: 1 / substepRate,
         constrainRadius: input.constrainRadius,
         constrainCenter: input.constrainCenter ?? [0, 0],
+        constrainVelocity: input.constrainVelocity ?? [0, 0],
+        gravity: input.gravity ?? DEFAULT_GRAVITY,
+        toolEffect: input.toolEffect ?? null,
         boxDim: this.bounds,
         constrainType: input.classicConstrain ? 0 : 1,
         speedLimit: this.speedLimit,
