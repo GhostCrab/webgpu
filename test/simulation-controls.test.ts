@@ -2,73 +2,90 @@ import { describe, expect, test } from 'vitest';
 
 import { STARTING_BOUNDARY_RADIUS } from '../src/camera';
 import { DEFAULT_SUBSTEP_RATE } from '../src/clock';
+import {
+  BLAST_SPEED,
+  BLAST_STRENGTH,
+  CONTAINER_RADIUS_FRACTION,
+  IMPLOSION_RADIUS,
+  IMPLOSION_SCALE,
+  POINTER_VELOCITY_SMOOTHING,
+  SHOCKWAVE_WIDTH,
+  STIR_RATE,
+  TOOL_RADIUS,
+  TOOL_RADIUS_RANGE,
+  VORTEX_STRENGTH
+} from '../src/pointer-tools';
 import { SimulationControls } from '../src/simulation-controls';
+import { DEFAULT_GRAVITY, GRAVITY_STRENGTH } from '../src/verlet/gravity';
 
 const controls = () => new SimulationControls({ constrainRadius: STARTING_BOUNDARY_RADIUS });
+
+/** One 60 Hz frame, in seconds. */
+const FRAME = 1 / 60;
 
 describe('click force', () => {
   test('is off, at the origin, until a button is pressed', () => {
     const c = controls();
     c.movePointer(50, 60);
-    expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
   });
 
   test('the attract button pulls toward the pointer', () => {
     const c = controls();
     c.movePointer(50, 60);
-    c.press('attract');
-    expect(c.frameInput()).toMatchObject({ clickPoint: [50, 60], clickForce: 2000 });
+    c.pressButton('left');
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [50, 60], clickForce: 2000 });
   });
 
   test('the repel button pushes away from the pointer', () => {
     const c = controls();
-    c.press('repel');
-    expect(c.frameInput().clickForce).toBe(-2000);
+    c.pressButton('right');
+    expect(c.frameInput(FRAME).clickForce).toBe(-2000);
   });
 
   test('follows the pointer while a button is held', () => {
     const c = controls();
-    c.press('attract');
+    c.pressButton('left');
     c.movePointer(1, 2);
-    c.frameInput();
+    c.frameInput(FRAME);
     c.movePointer(3, 4);
-    expect(c.frameInput().clickPoint).toEqual([3, 4]);
+    expect(c.frameInput(FRAME).clickPoint).toEqual([3, 4]);
   });
 
   test('stops when the button is released', () => {
     const c = controls();
     c.movePointer(50, 60);
-    c.press('attract');
-    c.frameInput();
-    c.release('attract');
-    expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
+    c.pressButton('left');
+    c.frameInput(FRAME);
+    c.releaseButton('left');
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
   });
 
   test('with both buttons held, the most recent press wins', () => {
     const c = controls();
-    c.press('attract');
-    c.press('repel');
-    expect(c.frameInput().clickForce).toBe(-2000);
+    c.pressButton('left');
+    c.pressButton('right');
+    expect(c.frameInput(FRAME).clickForce).toBe(-2000);
   });
 
   test('releasing one of two held buttons hands the force to the other', () => {
     const c = controls();
-    c.press('attract');
-    c.press('repel');
-    c.release('repel');
-    expect(c.frameInput().clickForce).toBe(2000);
+    c.pressButton('left');
+    c.pressButton('right');
+    c.releaseButton('right');
+    expect(c.frameInput(FRAME).clickForce).toBe(2000);
 
-    c.press('repel');
-    c.release('attract');
-    expect(c.frameInput().clickForce).toBe(-2000);
+    c.pressButton('right');
+    c.releaseButton('left');
+    expect(c.frameInput(FRAME).clickForce).toBe(-2000);
   });
 
   test('uses the impulse set at the time of the press', () => {
     const c = controls();
     c.impulse = 500;
-    c.press('attract');
+    c.pressButton('left');
     c.impulse = 9000;
-    expect(c.frameInput().clickForce).toBe(500);
+    expect(c.frameInput(FRAME).clickForce).toBe(500);
   });
 });
 
@@ -77,27 +94,27 @@ describe('click lock', () => {
     const c = controls();
     c.toggle('clickLock');
     c.movePointer(50, 60);
-    c.press('repel');
-    c.frameInput();
-    c.release('repel');
+    c.pressButton('right');
+    c.frameInput(FRAME);
+    c.releaseButton('right');
     c.movePointer(700, 800);
-    expect(c.frameInput()).toMatchObject({ clickPoint: [50, 60], clickForce: -2000 });
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [50, 60], clickForce: -2000 });
   });
 
   test('turning it off clears the locked force', () => {
     const c = controls();
     c.toggle('clickLock');
-    c.press('attract');
-    c.frameInput();
-    c.release('attract');
+    c.pressButton('left');
+    c.frameInput(FRAME);
+    c.releaseButton('left');
     c.toggle('clickLock');
-    expect(c.frameInput().clickForce).toBe(0);
+    expect(c.frameInput(FRAME).clickForce).toBe(0);
   });
 });
 
 describe('settings', () => {
   test('start as collision on, running, reflective constrain', () => {
-    expect(controls().frameInput()).toMatchObject({
+    expect(controls().frameInput(FRAME)).toMatchObject({
       collide: true,
       classicConstrain: false,
       constrainRadius: STARTING_BOUNDARY_RADIUS
@@ -111,14 +128,14 @@ describe('settings', () => {
 
   test('start at the default substep rate, which the user can change', () => {
     const c = controls();
-    expect(c.frameInput().substepRate).toBe(DEFAULT_SUBSTEP_RATE);
+    expect(c.frameInput(FRAME).substepRate).toBe(DEFAULT_SUBSTEP_RATE);
     c.substepRate = 1200;
-    expect(c.frameInput().substepRate).toBe(1200);
+    expect(c.frameInput(FRAME).substepRate).toBe(1200);
   });
 
   test('start with the accepted collision settings, which the user can change', () => {
     const c = controls();
-    expect(c.frameInput()).toMatchObject({
+    expect(c.frameInput(FRAME)).toMatchObject({
       relaxation: 1.25,
       particleRestitution: 0.5,
       particleDamping: 0
@@ -126,7 +143,7 @@ describe('settings', () => {
     c.relaxation = 1;
     c.particleRestitution = 0.8;
     c.particleDamping = 0.1;
-    expect(c.frameInput()).toMatchObject({
+    expect(c.frameInput(FRAME)).toMatchObject({
       relaxation: 1,
       particleRestitution: 0.8,
       particleDamping: 0.1
@@ -138,7 +155,7 @@ describe('settings', () => {
     c.toggle('collide');
     c.toggle('classicConstrain');
     c.constrainRadius = 400;
-    expect(c.frameInput()).toMatchObject({
+    expect(c.frameInput(FRAME)).toMatchObject({
       collide: false,
       classicConstrain: true,
       constrainRadius: 400
@@ -243,7 +260,7 @@ describe('spawn', () => {
     c.movePointer(50, 60);
     c.startSpawning();
     c.frameSpawn(FRAME);
-    expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
   });
 });
 
@@ -283,7 +300,7 @@ describe('erase', () => {
     c.movePointer(50, 60);
     c.startErasing();
     c.frameErase();
-    expect(c.frameInput()).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
     expect(c.frameSpawn(1 / 60)).toEqual([]);
   });
 });
@@ -300,5 +317,293 @@ describe('constrain radius range', () => {
     const c = controls();
     c.constrainRadius = 400;
     expect(c.constrainRadiusRange.max).toBe(STARTING_BOUNDARY_RADIUS);
+  });
+});
+
+describe('pointer tools', () => {
+  test('start with the force tool, and no tool effect, gravity down and the boundary circle at rest', () => {
+    const c = controls();
+    expect(c.tool).toBe('force');
+    c.pressButton('left');
+    expect(c.frameInput(FRAME)).toMatchObject({
+      clickForce: 2000,
+      toolEffect: undefined,
+      gravity: DEFAULT_GRAVITY,
+      constrainCenter: [0, 0],
+      constrainVelocity: [0, 0]
+    });
+  });
+
+  test('choosing another ends the click force, even under click lock', () => {
+    const c = controls();
+    c.toggle('clickLock');
+    c.pressButton('left');
+    c.frameInput(FRAME);
+    c.releaseButton('left');
+    c.tool = 'stir';
+    expect(c.frameInput(FRAME)).toMatchObject({ clickPoint: [0, 0], clickForce: 0 });
+  });
+
+  test('other than force, the buttons give no click force', () => {
+    const c = controls();
+    c.tool = 'vortex';
+    c.movePointer(50, 60);
+    c.pressButton('left');
+    expect(c.frameInput(FRAME).clickForce).toBe(0);
+  });
+});
+
+describe('stir', () => {
+  test('acts only while the left button is held', () => {
+    const c = controls();
+    c.tool = 'stir';
+    expect(c.frameInput(FRAME).toolEffect).toBeUndefined();
+    c.pressButton('right');
+    expect(c.frameInput(FRAME).toolEffect).toBeUndefined();
+  });
+
+  test('takes the pointer, the tool radius and the pointer velocity, smoothed', () => {
+    const c = controls();
+    c.tool = 'stir';
+    c.frameInput(FRAME);
+    c.pressButton('left');
+    c.movePointer(10, 0);
+    const effect = c.frameInput(FRAME).toolEffect;
+    expect(effect).toMatchObject({ kind: 'stir', center: [10, 0], radius: TOOL_RADIUS.stir, rate: STIR_RATE });
+    // 10 units in a frame, of which smoothing keeps the new part.
+    const [vx, vy] = effect.kind === 'stir' ? effect.velocity : [NaN, NaN];
+    expect(vx).toBeCloseTo((10 / FRAME) * (1 - POINTER_VELOCITY_SMOOTHING), 6);
+    expect(vy).toBe(0);
+  });
+});
+
+describe('vortex', () => {
+  test('spins anticlockwise with the left button and clockwise with the right', () => {
+    const c = controls();
+    c.tool = 'vortex';
+    c.pressButton('left');
+    expect(c.frameInput(FRAME).toolEffect).toMatchObject({ kind: 'vortex', strength: -VORTEX_STRENGTH });
+    c.releaseButton('left');
+    c.pressButton('right');
+    expect(c.frameInput(FRAME).toolEffect).toMatchObject({ kind: 'vortex', strength: VORTEX_STRENGTH });
+    c.releaseButton('right');
+    expect(c.frameInput(FRAME).toolEffect).toBeUndefined();
+  });
+});
+
+describe('paddle', () => {
+  test('is an obstacle at the pointer while the left button is held', () => {
+    const c = controls();
+    c.tool = 'paddle';
+    c.movePointer(5, 6);
+    c.frameInput(FRAME);
+    c.pressButton('left');
+    // Its velocity is the pointer's, as the stir's is.
+    expect(c.frameInput(FRAME).toolEffect).toMatchObject({
+      kind: 'obstacle',
+      center: [5, 6],
+      radius: TOOL_RADIUS.paddle
+    });
+  });
+});
+
+describe('shockwave', () => {
+  test('a left press blasts a ring outward from the pointer, growing every frame', () => {
+    const c = controls();
+    c.tool = 'shockwave';
+    c.movePointer(100, 200);
+    c.pressButton('left');
+    c.releaseButton('left');
+    c.movePointer(0, 0);
+    expect(c.frameInput(FRAME).toolEffect).toEqual({
+      kind: 'shockwave',
+      center: [100, 200],
+      ringRadius: BLAST_SPEED * FRAME,
+      width: SHOCKWAVE_WIDTH,
+      strength: BLAST_STRENGTH
+    });
+    const next = c.frameInput(FRAME).toolEffect;
+    expect(next.kind === 'shockwave' && next.ringRadius).toBeCloseTo(2 * BLAST_SPEED * FRAME, 9);
+  });
+
+  test('a right press implodes: the ring shrinks to the pointer and pushes inward', () => {
+    const c = controls();
+    c.tool = 'shockwave';
+    c.pressButton('right');
+    const effect = c.frameInput(FRAME).toolEffect;
+    expect(effect).toMatchObject({ kind: 'shockwave', strength: -BLAST_STRENGTH * IMPLOSION_SCALE });
+    expect(effect.kind === 'shockwave' && effect.ringRadius).toBeCloseTo(
+      IMPLOSION_RADIUS - BLAST_SPEED * IMPLOSION_SCALE * FRAME,
+      9
+    );
+  });
+
+  test('ends: a blast past the starting circle, an implosion at its centre', () => {
+    for (const button of ['left', 'right'] as const) {
+      const c = controls();
+      c.tool = 'shockwave';
+      c.pressButton(button);
+      let frames = 0;
+      while (c.frameInput(FRAME).toolEffect && frames < 1000) frames++;
+      expect(frames).toBeLessThan(1000);
+      expect(c.toolOutline()).toBeNull();
+    }
+  });
+
+  test('holds still while paused', () => {
+    const c = controls();
+    c.tool = 'shockwave';
+    c.pressButton('left');
+    c.frameInput(FRAME);
+    c.toggle('paused');
+    const effect = c.frameInput(FRAME).toolEffect;
+    expect(effect.kind === 'shockwave' && effect.ringRadius).toBeCloseTo(BLAST_SPEED * FRAME, 9);
+  });
+
+  test('is outlined by its ring', () => {
+    const c = controls();
+    c.tool = 'shockwave';
+    c.movePointer(1, 2);
+    c.pressButton('left');
+    c.frameInput(FRAME);
+    expect(c.toolOutline()).toEqual({
+      kind: 'circle',
+      center: [1, 2],
+      radius: BLAST_SPEED * FRAME,
+      active: true
+    });
+  });
+});
+
+describe('tilt', () => {
+  test('the left button points gravity toward the pointer, and it stays there', () => {
+    const c = controls();
+    c.tool = 'tilt';
+    c.movePointer(-100, 0);
+    c.pressButton('left');
+    expect(c.frameInput(FRAME).gravity).toEqual([-GRAVITY_STRENGTH, 0]);
+    c.releaseButton('left');
+    c.movePointer(0, -50);
+    expect(c.frameInput(FRAME).gravity).toEqual([-GRAVITY_STRENGTH, 0]);
+    expect(c.toolOutline()).toEqual({ kind: 'arrow', from: [0, 0], to: [-GRAVITY_STRENGTH / 10, 0] });
+  });
+
+  test('the right button turns gravity off until levelled', () => {
+    const c = controls();
+    c.tool = 'tilt';
+    c.pressButton('right');
+    c.frameInput(FRAME);
+    c.releaseButton('right');
+    expect(c.frameInput(FRAME).gravity).toEqual([0, 0]);
+    c.level();
+    expect(c.frameInput(FRAME).gravity).toEqual(DEFAULT_GRAVITY);
+  });
+
+  test('choosing another tool levels gravity', () => {
+    const c = controls();
+    c.tool = 'tilt';
+    c.pressButton('right');
+    c.frameInput(FRAME);
+    c.releaseButton('right');
+    c.tool = 'force';
+    expect(c.frameInput(FRAME).gravity).toEqual(DEFAULT_GRAVITY);
+  });
+});
+
+describe('container', () => {
+  test('choosing it shrinks a boundary circle too large to move, and choosing another restores it', () => {
+    const c = controls();
+    c.tool = 'container';
+    expect(c.constrainRadius).toBe(STARTING_BOUNDARY_RADIUS * CONTAINER_RADIUS_FRACTION);
+    c.tool = 'stir';
+    expect(c.constrainRadius).toBe(STARTING_BOUNDARY_RADIUS);
+  });
+
+  test('leaves a boundary circle already small enough alone', () => {
+    const c = controls();
+    c.constrainRadius = 300;
+    c.tool = 'container';
+    expect(c.constrainRadius).toBe(300);
+    c.tool = 'force';
+    expect(c.constrainRadius).toBe(300);
+  });
+
+  test('dragging with the left button moves the boundary circle with the pointer, at its speed', () => {
+    const c = controls();
+    c.tool = 'container';
+    c.movePointer(100, 100);
+    c.pressButton('left');
+    c.frameInput(FRAME);
+    c.movePointer(110, 95);
+    const input = c.frameInput(FRAME);
+    expect(input.constrainCenter).toEqual([10, -5]);
+    expect(input.constrainVelocity[0]).toBeCloseTo(10 / FRAME, 6);
+    expect(input.constrainVelocity[1]).toBeCloseTo(-5 / FRAME, 6);
+    // Once it stops moving, so does its velocity.
+    expect(c.frameInput(FRAME).constrainVelocity).toEqual([0, 0]);
+  });
+
+  test('keeps the boundary circle inside the starting circle', () => {
+    const c = controls();
+    c.tool = 'container';
+    c.pressButton('left');
+    c.movePointer(5000, 0);
+    const room = STARTING_BOUNDARY_RADIUS - c.constrainRadius;
+    expect(c.frameInput(FRAME).constrainCenter[0]).toBeCloseTo(room, 6);
+  });
+
+  test('stays where it was let go, until levelled, which brings it back without flinging', () => {
+    const c = controls();
+    c.tool = 'container';
+    c.pressButton('left');
+    c.movePointer(50, 0);
+    c.frameInput(FRAME);
+    c.releaseButton('left');
+    c.movePointer(0, 0);
+    expect(c.frameInput(FRAME).constrainCenter).toEqual([50, 0]);
+    c.level();
+    expect(c.frameInput(FRAME)).toMatchObject({ constrainCenter: [0, 0], constrainVelocity: [0, 0] });
+  });
+});
+
+describe('tool radius', () => {
+  test('each tool with a reach keeps its own', () => {
+    const c = controls();
+    c.tool = 'stir';
+    c.toolRadius = 250;
+    c.tool = 'paddle';
+    expect(c.toolRadius).toBe(TOOL_RADIUS.paddle);
+    c.tool = 'stir';
+    expect(c.toolRadius).toBe(250);
+  });
+
+  test('the wheel scales it, within its range', () => {
+    const c = controls();
+    c.tool = 'vortex';
+    c.scaleToolRadius(2);
+    expect(c.toolRadius).toBe(TOOL_RADIUS.vortex * 2);
+    c.scaleToolRadius(1000);
+    expect(c.toolRadius).toBe(TOOL_RADIUS_RANGE.max);
+    c.scaleToolRadius(0);
+    expect(c.toolRadius).toBe(TOOL_RADIUS_RANGE.min);
+  });
+
+  test('a tool without a reach has none to set', () => {
+    const c = controls();
+    for (const tool of ['force', 'shockwave', 'tilt', 'container'] as const) {
+      c.tool = tool;
+      expect(c.toolHasRadius).toBe(false);
+      c.toolRadius = 300;
+      expect(c.toolRadius).toBe(0);
+    }
+  });
+
+  test('is outlined at the pointer, active while the tool acts', () => {
+    const c = controls();
+    c.tool = 'paddle';
+    c.movePointer(7, 8);
+    expect(c.toolOutline()).toEqual({ kind: 'circle', center: [7, 8], radius: TOOL_RADIUS.paddle, active: false });
+    c.pressButton('left');
+    expect(c.toolOutline()).toMatchObject({ active: true });
   });
 });

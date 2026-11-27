@@ -77,6 +77,19 @@ _Avoid_: Impulse, mouse force
 **Click lock**:
 A mode in which the click force stays active after the mouse button is released.
 
+**Pointer tool**:
+What the mouse buttons and wheel do: the force tool (the click force), stir, vortex, shockwave, tilt, container or paddle.
+_Avoid_: Interaction mode, mouse mode
+
+**Tool effect**:
+What a pointer tool does to the particles in one frame, as simulation input: a stir, a vortex, a shockwave or an obstacle, each acting within its own region. The paddle tool's effect is an obstacle.
+
+**Obstacle**:
+A solid moving disc that particles cannot enter.
+
+**Level**:
+To point gravity down again and return the boundary circle to the origin.
+
 **Simulation space**:
 The coordinate space particles live in, measured in its own units, with its origin at the centre and y pointing down. Its size is set by the boundary circle's radius; it does not change with the window or the display.
 _Avoid_: World space, sim resolution
@@ -91,7 +104,7 @@ _Avoid_: Viewport, letterbox
 The arrangement of one particle's fields in memory, shared by the shaders and the code that reads and writes particles.
 
 **Simulation input**:
-Everything outside the simulation that affects one frame of it: the click force and its point, the boundary circle's radius and behaviour, whether particles collide, and the substep rate.
+Everything outside the simulation that affects one frame of it: the click force and its point, gravity, the tool effect, the boundary circle's radius, centre, velocity and behaviour, whether particles collide, and the substep rate.
 _Avoid_: Params, sim params
 
 **Simulation controls**:

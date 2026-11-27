@@ -8,10 +8,13 @@ struct Params {
   constrainRadius: f32,
   boxDim: f32,
   constrainType: u32,
-  unused1: u32,
+  // The pointer tool's effect (tool-effect.ts): 0 none, 1 stir, 2 vortex,
+  // 3 shockwave, 4 obstacle.
+  toolKind: u32,
   unused2: u32,
   // The furthest a particle may move in one substep: the smallest radius.
   speedLimit: f32,
+  // xy: the boundary circle's centre, zw: its velocity in units per second.
   constrainCenter: vec4<f32>,
   // xy: the point, z: the force (positive attracts, negative repels, 0 is off)
   clickPoint: vec4<f32>,
@@ -24,6 +27,13 @@ struct Params {
   // they collide.
   particleDamping: f32,
   unused3: f32,
+  // xy: gravity, in units per second squared.
+  gravity: vec4<f32>,
+  // The tool effect. xy: its centre; z: its radius (a shockwave's, half its
+  // ring's thickness); w: its strength (a stir's, its rate).
+  toolArea: vec4<f32>,
+  // xy: the tool effect's velocity; z: a shockwave's ring radius.
+  toolMotion: vec4<f32>,
 };
 
 // A particle. Its colour is not here: it lives in a buffer of its own, at the
@@ -125,8 +135,11 @@ struct Constrained {
 // The selected constrain. A particle past the boundary circle is placed back
 // on it. Its velocity is its own, never the distance it is moved back, so a
 // particle far outside the circle returns to it without being flung across.
+// A moving boundary circle bounces particles as seen from the circle: its
+// velocity is taken off before the bounce and added back after.
 fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Constrained {
   let center = params.constrainCenter.xy;
+  let wallVelocity = params.constrainCenter.zw;
   let edge = params.constrainRadius - radius;
   let fromCenter = pos - center;
   let dist = length(fromCenter);
@@ -136,7 +149,7 @@ fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Cons
   }
 
   let outward = fromCenter / dist;
-  var v = velocity;
+  var v = velocity - wallVelocity;
   let outwardSpeed = dot(v, outward);
 
   if (params.constrainType == 0) {
@@ -151,7 +164,7 @@ fn constrainToBoundary(pos: vec2<f32>, velocity: vec2<f32>, radius: f32) -> Cons
     v -= (1.0 + BOUNDARY_RESTITUTION) * outwardSpeed * outward;
   }
 
-  return Constrained(center + outward * edge, v, true);
+  return Constrained(center + outward * edge, v + wallVelocity, true);
 }
 
 // Shortens v to at most `limit`, keeping its direction. The speed limit uses

@@ -1,6 +1,7 @@
 import { makeShaderDataDefinitions, makeStructuredView } from 'webgpu-utils';
 
 import commonWGSL from './shaders/common.wgsl';
+import { TOOL_EFFECT_KIND, ToolEffect } from './tool-effect';
 
 /**
  * The particle layout: how one particle's fields are arranged in memory.
@@ -47,6 +48,10 @@ export interface ParamsValues {
   constrainRadius: number;
   /** Centre of the boundary circle. */
   constrainCenter: [number, number];
+  /** Velocity of the boundary circle, in units per second. */
+  constrainVelocity: [number, number];
+  /** Gravity, in units per second squared. */
+  gravity: [number, number];
   boxDim: number;
   /** 0: classic constrain, 1: reflective constrain. */
   constrainType: number;
@@ -58,17 +63,37 @@ export interface ParamsValues {
   relaxation: number;
   particleRestitution: number;
   particleDamping: number;
+  /** The pointer tool's effect, or null for none. */
+  toolEffect: ToolEffect | null;
 }
 
 /** Lays out the contents of the simulation params uniform. */
 export function packParams(values: ParamsValues): ArrayBuffer {
   const view = makeStructuredView(structs.Params);
+  const { toolEffect: tool, ...rest } = values;
   view.set({
-    ...values,
-    constrainCenter: [...values.constrainCenter, 0, 0],
-    clickPoint: [...values.clickPoint, 0]
+    ...rest,
+    constrainCenter: [...values.constrainCenter, ...values.constrainVelocity],
+    clickPoint: [...values.clickPoint, 0],
+    gravity: [...values.gravity, 0, 0],
+    toolKind: tool ? TOOL_EFFECT_KIND[tool.kind] : 0,
+    ...(tool ? packToolEffect(tool) : {})
   });
   return view.arrayBuffer;
+}
+
+/** A tool effect's two vectors, as the shaders read them (see Params in common.wgsl). */
+function packToolEffect(tool: ToolEffect): { toolArea: number[]; toolMotion: number[] } {
+  switch (tool.kind) {
+    case 'stir':
+      return { toolArea: [...tool.center, tool.radius, tool.rate], toolMotion: [...tool.velocity, 0, 0] };
+    case 'vortex':
+      return { toolArea: [...tool.center, tool.radius, tool.strength], toolMotion: [0, 0, 0, 0] };
+    case 'shockwave':
+      return { toolArea: [...tool.center, tool.width, tool.strength], toolMotion: [0, 0, tool.ringRadius, 0] };
+    case 'obstacle':
+      return { toolArea: [...tool.center, tool.radius, 0], toolMotion: [...tool.velocity, 0, 0] };
+  }
 }
 
 /** Field names, offsets and sizes of a struct in common.wgsl, for layout checks. */

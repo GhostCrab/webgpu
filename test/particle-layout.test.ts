@@ -13,6 +13,9 @@ const {
   unpackParticles
 } = await import('../src/verlet/particle-layout');
 
+const { TOOL_EFFECT_KIND } = await import('../src/verlet/tool-effect');
+type ToolEffect = import('../src/verlet/tool-effect').ToolEffect;
+
 type Rgb = [number, number, number];
 
 test('params are packed where the shader struct puts them', () => {
@@ -21,6 +24,9 @@ test('params are packed where the shader struct puts them', () => {
     deltaTime: 2,
     constrainRadius: 3,
     constrainCenter: [8, 9],
+    constrainVelocity: [10, 11],
+    gravity: [12, 13],
+    toolEffect: { kind: 'stir', center: [14, 15], radius: 16, velocity: [17, 18], rate: 19 },
     boxDim: 4,
     constrainType: 1,
     speedLimit: 8,
@@ -44,6 +50,41 @@ test('params are packed where the shader struct puts them', () => {
   expect(floats[offset.relaxation]).toBe(1.25);
   expect(floats[offset.particleRestitution]).toBe(0.5);
   expect(floats[offset.particleDamping]).toBe(0.25);
+  expect([...floats.subarray(offset.constrainCenter + 2, offset.constrainCenter + 4)]).toEqual([10, 11]);
+  expect([...floats.subarray(offset.gravity, offset.gravity + 2)]).toEqual([12, 13]);
+  expect(new Uint32Array(buffer)[offset.toolKind]).toBe(TOOL_EFFECT_KIND.stir);
+  expect([...floats.subarray(offset.toolArea, offset.toolArea + 4)]).toEqual([14, 15, 16, 19]);
+  expect([...floats.subarray(offset.toolMotion, offset.toolMotion + 2)]).toEqual([17, 18]);
+});
+
+test.each([
+  [{ kind: 'vortex', center: [1, 2], radius: 3, strength: -4 }, [1, 2, 3, -4], [0, 0, 0]],
+  [{ kind: 'shockwave', center: [1, 2], ringRadius: 5, width: 3, strength: 4 }, [1, 2, 3, 4], [0, 0, 5]],
+  [{ kind: 'obstacle', center: [1, 2], radius: 3, velocity: [6, 7] }, [1, 2, 3, 0], [6, 7, 0]]
+] as const)('a %o tool effect is packed where the shaders read it', (toolEffect, area, motion) => {
+  const buffer = packParams({
+    totalTime: 0,
+    deltaTime: 0,
+    constrainRadius: 0,
+    constrainCenter: [0, 0],
+    constrainVelocity: [0, 0],
+    gravity: [0, 0],
+    toolEffect: toolEffect as ToolEffect,
+    boxDim: 0,
+    constrainType: 0,
+    speedLimit: 0,
+    clickPoint: [0, 0, 0],
+    relaxation: 0,
+    particleRestitution: 0,
+    particleDamping: 0
+  });
+  const offset = Object.fromEntries(
+    structShape('Params').fields.map(([name, fieldOffset]) => [name, fieldOffset / 4])
+  );
+  const floats = new Float32Array(buffer);
+  expect(new Uint32Array(buffer)[offset.toolKind]).toBe(TOOL_EFFECT_KIND[toolEffect.kind]);
+  expect([...floats.subarray(offset.toolArea, offset.toolArea + 4)]).toEqual(area);
+  expect([...floats.subarray(offset.toolMotion, offset.toolMotion + 3)]).toEqual(motion);
 });
 
 describe('the particle', () => {

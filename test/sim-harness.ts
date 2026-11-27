@@ -7,7 +7,7 @@ import { fitCamera, simulationSize, STARTING_BOUNDARY_RADIUS } from '../src/came
 import { SEED_RADIUS } from '../src/verlet/capacity';
 import { Particle, SeedParticle } from '../src/verlet/particle-layout';
 import { DEFAULT_COLLISION_SETTINGS } from '../src/verlet/collision';
-import { BinGridContents, DEFAULT_CAPACITY, scatter, Verlet } from '../src/verlet/verlet';
+import { BinGridContents, DEFAULT_CAPACITY, scatter, ToolEffect, Verlet } from '../src/verlet/verlet';
 
 export type { BinGridContents };
 
@@ -46,6 +46,12 @@ export interface SimInput {
   constrainRadius?: number;
   /** Defaults to the origin. */
   constrainCenter?: [number, number];
+  /** The boundary circle's velocity in units per second. Defaults to at rest. */
+  constrainVelocity?: [number, number];
+  /** Gravity in units per second squared. Defaults to the app's. */
+  gravity?: [number, number];
+  /** The pointer tool's effect. Defaults to none. */
+  toolEffect?: ToolEffect;
   classicConstrain?: boolean;
   collide?: boolean;
   /** Substeps per second of simulated time. Defaults to SUBSTEP_RATE. */
@@ -234,6 +240,9 @@ export async function createSim(
             clickForce: input.clickForce ?? 0,
             constrainRadius: input.constrainRadius ?? boundaryRadius,
             constrainCenter: input.constrainCenter,
+            constrainVelocity: input.constrainVelocity,
+            gravity: input.gravity,
+            toolEffect: input.toolEffect,
             classicConstrain: input.classicConstrain ?? false,
             collide: input.collide ?? true,
             substepRate: input.substepRate ?? SUBSTEP_RATE,
